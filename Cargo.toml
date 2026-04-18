@@ -1,0 +1,85 @@
+[package]
+name = "sky"
+version = "0.1.0"
+edition = "2021"
+
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/sky-runtime",
+    "crates/sky-proto",
+    "crates/sky-worker",
+    "crates/sky-gateway",
+    "crates/sky-router",
+    "crates/sky-middleware",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.95"
+authors = ["Sky Framework Contributors"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/REPLACE/sky"
+readme = "README.md"
+
+[workspace.dependencies]
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Observability
+tracing = "0.1"
+
+# Error handling
+thiserror = "1"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Identifiers
+uuid = { version = "1", features = ["v7", "serde"] }
+
+# Async extensions (for timeouts, streams, etc.)
+futures = "0.3"
+
+# Human-readable duration parsing for configs
+humantime-serde = "1"
+
+# tonic and prost - already used by sky-proto, now needed by sky-worker too
+tonic = "0.12"
+prost = "0.13"
+
+# tower for the transport layer
+tower = "0.5"
+
+# Unix socket connection handling
+hyper = "1"
+hyper-util = { version = "0.1", features = ["tokio"] }
+# HTTP server and extractors
+axum = "0.7"
+tower-http = { version = "0.6", features = ["limit", "trace"] }
+
+# CLI
+clap = { version = "4", features = ["derive"] }
+
+# Config file parsing
+toml = "0.8"
+
+# Structured logging setup
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Top-level error convenience for the binary
+anyhow = "1"
+
+# Internal crates - declared here so member crates can reference by `workspace = true`
+sky-runtime = { path = "crates/sky-runtime" }
+sky-proto = { path = "crates/sky-proto" }
+sky-worker = { path = "crates/sky-worker" }
+sky-router = { path = "crates/sky-router" }
+sky-middleware = { path = "crates/sky-middleware" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

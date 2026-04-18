@@ -1,0 +1,15 @@
+# sky/crates/sky-router/Cargo.toml
+[package]
+name = "sky-router"
+description = "Manifest-driven routing for the Sky framework (Phase 2)"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+readme.workspace = true
+publish = false
+
+[dependencies]
+# Added in Phase 2

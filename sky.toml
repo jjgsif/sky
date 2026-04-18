@@ -1,0 +1,30 @@
+# Sky gateway configuration.
+# Schema version. Sky uses versioned config to allow future schema evolution
+# without breaking existing deployments.
+version = "1"
+
+[listen]
+# Bind address. Use 127.0.0.1 for local-only, 0.0.0.0 to accept external traffic.
+address = "127.0.0.1:8080"
+# Maximum request body size.
+body_limit = "1mb"
+
+[logging]
+# "pretty" for human-readable dev output, "json" for production.
+format = "pretty"
+# Log level filter. Supports tracing's filter directives.
+level = "info"
+
+[worker]
+# Path to the Bun binary. Can be a bare name (searched on PATH) or absolute path.
+bun_path = "bun"
+# Path to the worker entry script.
+worker_script = "./worker/src/index.ts"
+# Unix socket where the worker listens and the gateway connects.
+socket_path = "/tmp/sky-worker.sock"
+# Version string the worker reports via Health.
+worker_version = "0.1.0"
+# How long to wait for the worker to become healthy before giving up.
+readiness_timeout = "10s"
+# Grace period for graceful shutdown.
+shutdown_grace = "5s"

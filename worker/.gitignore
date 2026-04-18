@@ -1,0 +1,21 @@
+# Bun
+node_modules/
+bun.lockb.backup
+
+# Generated protobuf code - regenerated from .proto files
+gen/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Worker (TypeScript) specific
+worker/node_modules/
+worker/gen/

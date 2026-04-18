@@ -1,0 +1,27 @@
+# Rust build artifacts
+/target
+**/*.rs.bk
+
+# Cargo lock is checked in for the workspace (contains binaries)
+# Don't ignore Cargo.lock
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Environment files (for later phases when we have config)
+.env
+.env.local
+
+# Bun/Node files for worker/ directory (added later)
+node_modules/
+dist/
+bun.lockb
+
+*.sock
