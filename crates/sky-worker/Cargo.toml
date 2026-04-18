@@ -26,6 +26,8 @@ hyper = { workspace = true }
 hyper-util = { workspace = true }
 futures = { workspace = true }
 humantime-serde = { workspace = true }
+arc-swap = { workspace = true }
+tokio-util = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }

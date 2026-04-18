@@ -1,39 +1,49 @@
-//! The per-worker supervisor.
-//!
-//! A [`Supervisor`] owns a single worker process from spawn to exit.
-//! It ensures the worker is alive and healthy before exposing a client,
-//! and coordinates graceful shutdown when dropped or explicitly closed.
-//!
-//! # Phase 1 limitations
-//!
-//! - No automatic restart on crash (arrives in E1-S7).
-//! - No continuous health polling after readiness.
-//! - Single worker per supervisor (worker pools arrive in E3-S1).
+/// Owns a running worker process and its communication channel.
+///
+/// # Lifecycle
+///
+/// The Supervisor is constructed via [`Supervisor::start`] and must be
+/// cleaned up via [`Supervisor::shutdown`]. Dropping the Supervisor
+/// without calling `shutdown` will leak the worker process — the
+/// monitor task will continue running and hold the Bun child alive
+/// until the Tokio runtime itself shuts down.
+///
+/// # Phase 1 limitations
+///
+/// - No automatic restart on crash (arrives in E1-S7).
+/// - No continuous health polling after readiness.
+/// - Single worker per supervisor (worker pools arrive in E3-S1).
 
 use crate::client::HelloClient;
 use crate::config::WorkerConfig;
+use crate::restart_policy::{FailureOutcome, RestartPolicy};
 use crate::transport::connect_uds;
+use arc_swap::ArcSwap;
 use sky_proto::v1::{
-    worker_control_client::WorkerControlClient, HealthRequest, HealthStatus,
-    ShutdownRequest,
+    HealthRequest, HealthStatus, ShutdownRequest, worker_control_client::WorkerControlClient,
 };
 use sky_runtime::WorkerError;
 use std::process::Stdio;
+use std::sync::Arc;
+use tokio::task::JoinHandle;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::time::{sleep, timeout, Instant};
+use tokio::time::{sleep};
+use std::time::Instant;
+use tokio_util::sync::CancellationToken;
 use tonic::transport::Channel;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// Owns a running worker process and its communication channel.
 ///
 /// Construct via [`Supervisor::start`], use via [`Supervisor::hello_client`],
 /// clean up via [`Supervisor::shutdown`] (or drop, as a fallback).
 pub struct Supervisor {
-    child: Option<Child>,
-    channel: Channel,
+    channel: Arc<ArcSwap<Channel>>,
     config: WorkerConfig,
     pool_name: String,
+    shutdown_token: CancellationToken,
+    monitor_handle: JoinHandle<()>,
 }
 
 impl Supervisor {
@@ -60,97 +70,81 @@ impl Supervisor {
             reason: format!("invalid config: {e}"),
         })?;
 
-        info!(
-            socket_path = %config.socket_path.display(),
-            worker_version = %config.worker_version,
-            "spawning worker",
-        );
-
         // Spawn the Bun process.
-        let mut child = spawn_worker(&config, &pool_name)?;
+        let (child, channel) = spawn_and_ready(&config, &pool_name).await?;
+        let channel_swap: Arc<ArcSwap<Channel>> = Arc::new(ArcSwap::from_pointee(channel.clone())); // Arc<ArcSwap<Channel>>
+        let restart_policy = RestartPolicy::new(&config);
 
-        // Stream stdout/stderr to our tracing output via background tasks.
-        // These tasks run until the child's streams close (on exit).
-        if let Some(stdout) = child.stdout.take() {
-            spawn_output_forwarder(stdout, "worker stdout", &pool_name);
-        }
-        if let Some(stderr) = child.stderr.take() {
-            spawn_output_forwarder(stderr, "worker stderr", &pool_name);
-        }
+        let shutdown_token = CancellationToken::new();
 
-        // Wait for the worker to become healthy, respecting the timeout.
-        // This also detects early process exit (crash during startup).
-        let channel = wait_for_ready(&config, &pool_name, &mut child).await?;
+        let monitor_handle = tokio::spawn({
+            let shutdown_token = shutdown_token.clone();
+            let config = config.clone();
+            let pool_name = pool_name.clone();
+            let channel = channel_swap.clone();
 
-        info!(pool = %pool_name, "worker ready");
+            async move {
+                monitor_loop(
+                    child,
+                    channel,
+                    shutdown_token,
+                    config,
+                    restart_policy,
+                    &pool_name,
+                )
+                .await;
+            }
+        });
 
         Ok(Self {
-            child: Some(child),
-            channel,
+            channel: channel_swap,
             config,
             pool_name,
+            shutdown_token,
+            monitor_handle,
         })
     }
 
     /// Return a client for calling HelloService on this worker.
     #[must_use]
     pub fn hello_client(&self) -> HelloClient {
-        HelloClient::new(self.channel.clone(), &self.pool_name)
+        let channel = self.channel.load_full();
+        HelloClient::new((*channel).clone(), &self.pool_name)
     }
 
     /// Shutdown the worker gracefully. Consumes self.
-    pub async fn shutdown(mut self) -> Result<(), WorkerError> {
-        self.shutdown_inner().await
-    }
-
-    async fn shutdown_inner(&mut self) -> Result<(), WorkerError> {
-        // Take the child out so it's owned here. After this, the Supervisor
-        // no longer has a live child to drop.
-        let Some(mut child) = self.child.take() else {
-            // Already shut down or never had one. Nothing to do.
-            return Ok(());
-        };
-
+    pub async fn shutdown(self) -> Result<(), WorkerError> {
         info!(pool = %self.pool_name, "initiating worker shutdown");
 
-        // Send Shutdown RPC to the worker.
-        let shutdown_result = send_shutdown(&self.channel, &self.config).await;
+        // Step 1: Cancel the token. After this, the monitor will not try
+        // to restart the worker if it dies.
+        self.shutdown_token.cancel();
+
+        // Step 2: Send the graceful Shutdown RPC. Best-effort — if it fails,
+        // we'll let the monitor's timeout path handle cleanup.
+        let current_channel = self.channel.load_full();
+        let shutdown_result = send_shutdown(&current_channel, &self.config).await;
         if let Err(e) = shutdown_result {
-            warn!(pool = %self.pool_name, error = %e, "shutdown RPC failed; will force-kill");
+            warn!(
+                pool = %self.pool_name,
+                error = %e,
+                "shutdown RPC failed; monitor will force-kill"
+            );
         }
 
-        // Wait for the child to exit within the grace + buffer window.
-        let total_wait = self.config.shutdown_grace + self.config.force_kill_buffer;
-        let exit_result = timeout(total_wait, child.wait()).await;
-
-        match exit_result {
-            Ok(Ok(status)) => {
-                info!(
-                    pool = %self.pool_name,
-                    exit_code = ?status.code(),
-                    "worker exited cleanly",
-                );
-                Ok(())
-            }
-            Ok(Err(e)) => {
-                error!(pool = %self.pool_name, error = %e, "error awaiting worker exit");
-                Err(WorkerError::Unreachable {
-                    pool: self.pool_name.clone(),
-                    reason: format!("wait failed: {e}"),
-                })
-            }
-            Err(_timeout_elapsed) => {
-                warn!(
-                    pool = %self.pool_name,
-                    "worker did not exit within grace window; killing",
-                );
-                // `kill` sends SIGKILL on Unix.
-                let _ = child.kill().await;
-                // Reap the child so it doesn't become a zombie.
-                let _ = child.wait().await;
-                Ok(())
-            }
+        // Step 3: Wait for the monitor task to complete. The monitor is
+        // responsible for waiting on the child, force-killing on timeout,
+        // and reaping. When its task future completes, we know cleanup is done.
+        if let Err(e) = self.monitor_handle.await {
+            warn!(
+                pool = %self.pool_name,
+                error = %e,
+                "monitor task did not complete cleanly"
+            );
         }
+
+        info!(pool = %self.pool_name, "worker shut down");
+        Ok(())
     }
 }
 
@@ -198,47 +192,6 @@ where
     });
 }
 
-async fn wait_for_ready(
-    config: &WorkerConfig,
-    pool_name: &str,
-    child: &mut Child,
-) -> Result<Channel, WorkerError> {
-    let deadline = Instant::now() + config.readiness_timeout;
-
-    loop {
-        // Check whether we've exceeded the readiness timeout.
-        if Instant::now() >= deadline {
-            return Err(WorkerError::ReadinessTimeout {
-                pool: pool_name.to_string(),
-                timeout_ms: config.readiness_timeout.as_millis() as u64,
-            });
-        }
-
-        // Check whether the child exited while we were waiting.
-        // This catches crashes during startup (e.g., missing dependencies,
-        // port in use, etc.).
-        if let Ok(Some(status)) = child.try_wait() {
-            return Err(WorkerError::Unreachable {
-                pool: pool_name.to_string(),
-                reason: format!("worker exited during startup with status {:?}", status.code()),
-            });
-        }
-
-        // Try to connect and health-check.
-        match try_health_check(&config.socket_path).await {
-            Ok(channel) => return Ok(channel),
-            Err(e) => {
-                debug!(
-                    pool = %pool_name,
-                    error = %e,
-                    "worker not yet ready; retrying",
-                );
-                sleep(config.poll_interval).await;
-            }
-        }
-    }
-}
-
 async fn try_health_check(
     socket_path: &std::path::Path,
 ) -> Result<Channel, Box<dyn std::error::Error + Send + Sync>> {
@@ -272,23 +225,135 @@ async fn send_shutdown(channel: &Channel, config: &WorkerConfig) -> Result<(), W
     Ok(())
 }
 
-impl Drop for Supervisor {
-    /// Attempts to clean up the worker if the Supervisor is dropped
-    /// without explicit shutdown.
-    ///
-    /// This is a fallback — preferring `shutdown().await` is better
-    /// because Drop can't run async code, so cleanup here is best-effort.
-    fn drop(&mut self) {
-        if let Some(mut child) = self.child.take() {
-            warn!(
-                pool = %self.pool_name,
-                "Supervisor dropped without explicit shutdown; killing child",
-            );
-            // Synchronous kill via the inner std process handle.
-            // We can't await here, so we can't do graceful shutdown.
-            // kill_on_drop on the Command will also fire, but we do
-            // an explicit start_kill for clarity.
+async fn wait_for_ready(
+    config: &WorkerConfig,
+    pool_name: &str,
+    child: &mut Child,
+) -> Result<Channel, WorkerError> {
+    let deadline = Instant::now() + config.readiness_timeout;
+
+    loop {
+        // Check whether we've exceeded the readiness timeout.
+        if Instant::now() >= deadline {
+            return Err(WorkerError::ReadinessTimeout {
+                pool: pool_name.to_string(),
+                timeout_ms: config.readiness_timeout.as_millis() as u64,
+            });
+        }
+
+        // Check whether the child exited while we were waiting.
+        // This catches crashes during startup (e.g., missing dependencies,
+        // port in use, etc.).
+        if let Ok(Some(status)) = child.try_wait() {
+            return Err(WorkerError::Unreachable {
+                pool: pool_name.to_string(),
+                reason: format!(
+                    "worker exited during startup with status {:?}",
+                    status.code()
+                ),
+            });
+        }
+
+        // Try to connect and health-check.
+        match try_health_check(&config.socket_path).await {
+            Ok(channel) => return Ok(channel),
+            Err(e) => {
+                debug!(
+                    pool = %pool_name,
+                    error = %e,
+                    "worker not yet ready; retrying",
+                );
+                sleep(config.poll_interval).await;
+            }
+        }
+    }
+}
+
+async fn spawn_and_ready(
+    config: &WorkerConfig,
+    pool_name: &str,
+) -> Result<(Child, Channel), WorkerError> {
+    let mut child = spawn_worker(config, pool_name)?;
+    info!("Worker spawned");
+
+    if let Some(stdout) = child.stdout.take() {
+        spawn_output_forwarder(stdout, "worker stdout", pool_name);
+    }
+    if let Some(stderr) = child.stderr.take() {
+        spawn_output_forwarder(stderr, "worker stderr", pool_name);
+    }
+
+    let channel = match wait_for_ready(config, pool_name, &mut child).await {
+        Ok(c) => c,
+        Err(e) => {
+            // Kill the child before returning — otherwise the caller doesn't
+            // know to clean up, and we leak a process.
             let _ = child.start_kill();
+            let _ = child.wait().await;
+            return Err(e);
+        }
+    };
+
+    Ok((child, channel))
+}
+
+async fn monitor_loop(
+    mut child: Child,
+    channel: Arc<ArcSwap<Channel>>,
+    cancel_token: CancellationToken,
+    config: WorkerConfig,
+    mut restart_policy: RestartPolicy,
+    pool_name: &str,
+) {
+    loop {
+        tokio::select! {
+            exit_result = child.wait() => {
+                if cancel_token.is_cancelled() {
+                    info!("Child has exited due to shutdown");
+                    break;
+                }
+
+                match restart_policy.record_failure(Instant::now()) {
+                    FailureOutcome::Permanent => {
+                        info!("Unable to spawn and ready worker within {:?}", restart_policy.max_backoff);
+                        break;
+                    }
+
+                    FailureOutcome::Backoff(delay) => {
+                        info!("Restarting after backoff delay: {:?}", delay);
+                        tokio::select! {
+                            _ = tokio::time::sleep(delay) => {
+                            }
+                            _ = cancel_token.cancelled() => break,
+                        }
+
+                        match spawn_and_ready(&config, &pool_name).await {
+                        Ok((new_child, new_channel)) => {
+                            channel.store(Arc::new(new_channel));
+                            child = new_child;
+                        }
+                        Err(e) => {
+                            info!("Unable to spawn worker after delay");
+                            break;
+                        }
+                    }
+                    }
+                }
+            }
+            _ = cancel_token.cancelled() => {
+                break;
+            }
+        }
+    }
+
+
+    let grace = config.shutdown_grace + config.force_kill_buffer;
+    match tokio::time::timeout(grace, child.wait()).await {
+        Ok(Ok(_status)) => { info!("Worker exited") }
+        Ok(Err(_e)) => { info!("Worker exited") },
+        Err(_elapsed) => {
+            let _ = child.kill().await;
+            info!("Grace period reached - killing worker");
         }
     }
 }

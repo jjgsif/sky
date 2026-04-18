@@ -44,6 +44,13 @@ pub enum WorkerError {
 
     #[error("worker pool '{pool}' failed to become ready within {timeout_ms}ms")]
     ReadinessTimeout { pool: String, timeout_ms: u64 },
+
+    #[error("worker pool '{pool}' failed {failures} times within {window_ms}mx; giving up")]
+    PermanentFailure {
+        pool: String,
+        failures: u32,
+        window_ms: u64,
+    },
 }
 
 /// Errors produced by invalid client requests.

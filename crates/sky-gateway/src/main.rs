@@ -9,7 +9,7 @@ mod errors;
 mod http;
 
 use crate::config::{GatewayConfig, LogFormat};
-use crate::http::{build_router, AppState};
+use crate::http::{AppState, build_router};
 use anyhow::{Context, Result};
 use clap::Parser;
 use sky_worker::Supervisor;
@@ -39,9 +39,8 @@ async fn main() -> Result<()> {
 
     // Load configuration first — failures here should be visible before
     // any logging setup, so we print directly to stderr.
-    let config = GatewayConfig::from_file(&cli.config).with_context(|| {
-        format!("failed to load config from {}", cli.config.display())
-    })?;
+    let config = GatewayConfig::from_file(&cli.config)
+        .with_context(|| format!("failed to load config from {}", cli.config.display()))?;
 
     // Now that we have the config, set up tracing with its preferences.
     init_tracing(&config)?;

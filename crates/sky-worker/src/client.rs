@@ -6,9 +6,7 @@
 //! for future framework-level concerns (retries, circuit breaking,
 //! tracing span attachment).
 
-use sky_proto::v1::{
-    hello_service_client::HelloServiceClient, GreetRequest, GreetResponse,
-};
+use sky_proto::v1::{GreetRequest, GreetResponse, hello_service_client::HelloServiceClient};
 use sky_runtime::{RequestId, WorkerError};
 use tonic::transport::Channel;
 

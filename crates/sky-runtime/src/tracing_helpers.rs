@@ -29,7 +29,7 @@ pub fn request_span(request_id: RequestId) -> Span {
 
 #[cfg(test)]
 mod tests {
-    use super::{request_span, RequestId};
+    use super::{RequestId, request_span};
 
     #[test]
     fn request_span_creates_span() {

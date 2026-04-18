@@ -1,4 +1,4 @@
-use sky_proto::v1::{worker_control_client::WorkerControlClient, HealthRequest};
+use sky_proto::v1::{HealthRequest, worker_control_client::WorkerControlClient};
 use std::path::PathBuf;
 
 #[tokio::main]
@@ -12,8 +12,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // let channel = sky_worker::connect_uds_for_probe(socket).await?;
     let channel = tonic::transport::Endpoint::from_static("http://127.0.0.1:50051")
-    .connect()
-    .await?;
+        .connect()
+        .await?;
     println!("channel established");
 
     let mut client = WorkerControlClient::new(channel);

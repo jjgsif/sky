@@ -5,9 +5,9 @@
 //! worker timed out). This module maps Sky's typed error hierarchy to
 //! appropriate HTTP status codes and JSON error bodies.
 
+use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
 use serde::Serialize;
 use sky_runtime::{ClientError, FrameworkError, GatewayError, WorkerError};
 
@@ -94,15 +94,21 @@ fn classify(err: &FrameworkError) -> (StatusCode, &'static str) {
             (StatusCode::BAD_GATEWAY, "worker_returned_error")
         }
 
+        FrameworkError::Worker(WorkerError::PermanentFailure { .. }) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "worker_permananent_failure",
+        ),
+
         FrameworkError::Client(ClientError::InvalidBody(_)) => {
             (StatusCode::BAD_REQUEST, "invalid_body")
         }
         FrameworkError::Client(ClientError::PayloadTooLarge { .. }) => {
             (StatusCode::PAYLOAD_TOO_LARGE, "payload_too_large")
         }
-        FrameworkError::Client(ClientError::UnsupportedContentType(_)) => {
-            (StatusCode::UNSUPPORTED_MEDIA_TYPE, "unsupported_content_type")
-        }
+        FrameworkError::Client(ClientError::UnsupportedContentType(_)) => (
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "unsupported_content_type",
+        ),
 
         FrameworkError::Gateway(GatewayError::ResourceExhaustion) => {
             (StatusCode::SERVICE_UNAVAILABLE, "resource_exhaustion")

@@ -116,7 +116,9 @@ impl GatewayConfig {
 }
 
 fn default_listen_address() -> SocketAddr {
-    "127.0.0.1:8080".parse().expect("hardcoded address is valid")
+    "127.0.0.1:8080"
+        .parse()
+        .expect("hardcoded address is valid")
 }
 
 fn default_body_limit() -> u64 {
@@ -202,10 +204,7 @@ worker_version = "0.1.0"
 "#;
         let config: GatewayConfig = toml::from_str(toml_src).unwrap();
         assert_eq!(config.version, "1");
-        assert_eq!(
-            config.listen.address.to_string(),
-            "127.0.0.1:8080"
-        );
+        assert_eq!(config.listen.address.to_string(), "127.0.0.1:8080");
         assert_eq!(config.listen.body_limit, 1024 * 1024);
         assert_eq!(config.logging.format, LogFormat::Pretty);
     }

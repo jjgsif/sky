@@ -58,6 +58,21 @@ pub struct WorkerConfig {
     /// Default: 2 seconds.
     #[serde(with = "humantime_serde", default = "default_force_kill_buffer")]
     pub force_kill_buffer: Duration,
+
+    #[serde(with = "humantime_serde", default = "default_initial_backoff")]
+    pub initial_backoff: Duration,
+
+    #[serde(with = "humantime_serde", default = "default_max_backoff")]
+    pub max_backoff: Duration,
+
+    #[serde(default = "default_failure_threshold")]
+    pub failure_threshold: u32,
+
+    #[serde(with = "humantime_serde", default = "default_failure_window")]
+    pub failure_window: Duration,
+
+    #[serde(with = "humantime_serde", default = "default_healthy_reset_duration")]
+    pub healthy_reset_duration: Duration,
 }
 
 impl WorkerConfig {
@@ -78,13 +93,18 @@ impl WorkerConfig {
             poll_interval: default_poll_interval(),
             shutdown_grace: default_shutdown_grace(),
             force_kill_buffer: default_force_kill_buffer(),
+            initial_backoff: default_initial_backoff(),
+            max_backoff: default_max_backoff(),
+            failure_threshold: default_failure_threshold(),
+            failure_window: default_failure_window(),
+            healthy_reset_duration: default_healthy_reset_duration(),
         }
     }
 
     /// Validate that paths point at existing files and that timings
     /// are non-zero. Called by the supervisor during `start()`.
     pub fn validate(&self) -> Result<(), ConfigError> {
-        if !resolve_binary(&self.bun_path).is_some() {
+        if resolve_binary(&self.bun_path).is_none() {
             return Err(ConfigError::WorkerBinaryNotFound(
                 self.bun_path.display().to_string(),
             ));
@@ -107,6 +127,13 @@ impl WorkerConfig {
             return Err(ConfigError::InvalidValue {
                 field: "poll_interval".to_string(),
                 value: "must be greater than zero".to_string(),
+            });
+        }
+
+        if self.initial_backoff > self.max_backoff {
+            return Err(ConfigError::InvalidValue {
+                field: "initial_backoff".to_string(),
+                value: "Initial Backoff must be less than Max Backoff".to_string(),
             });
         }
 
@@ -135,10 +162,34 @@ fn default_force_kill_buffer() -> Duration {
     Duration::from_secs(2)
 }
 
+fn default_initial_backoff() -> Duration {
+    Duration::from_millis(100)
+}
+
+fn default_max_backoff() -> Duration {
+    Duration::from_secs(30)
+}
+
+fn default_failure_threshold() -> u32 {
+    10
+}
+
+fn default_failure_window() -> Duration {
+    Duration::from_mins(5)
+}
+
+fn default_healthy_reset_duration() -> Duration {
+    Duration::from_secs(60)
+}
+
 fn resolve_binary(path: &std::path::Path) -> Option<PathBuf> {
     // If the path is not bare (has a separator), check it literally.
     if path.components().count() > 1 || path.is_absolute() {
-        return if path.exists() { Some(path.to_path_buf()) } else { None };
+        return if path.exists() {
+            Some(path.to_path_buf())
+        } else {
+            None
+        };
     }
 
     // Bare name: search PATH.

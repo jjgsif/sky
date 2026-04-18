@@ -41,7 +41,10 @@ fn unique_socket_path(test_name: &str) -> PathBuf {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    PathBuf::from(format!("/tmp/sky-test-{}-{}-{}.sock", test_name, pid, nanos))
+    PathBuf::from(format!(
+        "/tmp/sky-test-{}-{}-{}.sock",
+        test_name, pid, nanos
+    ))
 }
 
 fn test_config(test_name: &str) -> WorkerConfig {
@@ -74,7 +77,10 @@ async fn start_greet_shutdown_happy_path() {
         response.message
     );
 
-    supervisor.shutdown().await.expect("shutdown should succeed");
+    supervisor
+        .shutdown()
+        .await
+        .expect("shutdown should succeed");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

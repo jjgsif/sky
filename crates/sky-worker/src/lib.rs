@@ -22,14 +22,15 @@
 //! - Only HelloService exposed via typed client (other services arrive
 //!   with the manifest layer in Phase 2).
 
+mod client;
 mod config;
+mod restart_policy;
 mod supervisor;
 mod transport;
-mod client;
 
+pub use client::HelloClient;
 pub use config::WorkerConfig;
 pub use supervisor::Supervisor;
-pub use client::HelloClient;
 
 #[doc(hidden)]
 pub use transport::connect_uds as connect_uds_for_probe;

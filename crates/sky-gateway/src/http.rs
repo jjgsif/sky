@@ -4,11 +4,11 @@
 //! worker's HelloService. Real routes arrive with the manifest emitter
 //! in Phase 2.
 
+use axum::Router;
 use axum::extract::{Json, State};
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::post;
-use axum::Router;
 use serde::{Deserialize, Serialize};
 use sky_proto::v1::GreetRequest as ProtoGreetRequest;
 use sky_runtime::{ClientError, RequestId};
@@ -79,9 +79,8 @@ async fn hello_handler(
     info!("received greet request");
 
     // Convert axum's JSON rejection into our typed error.
-    let Json(req) = body.map_err(|err| {
-        ClientError::InvalidBody(format!("failed to parse JSON body: {err}"))
-    })?;
+    let Json(req) =
+        body.map_err(|err| ClientError::InvalidBody(format!("failed to parse JSON body: {err}")))?;
 
     // Translate HTTP DTO to Protobuf type. In Phase 2 this translation
     // is derived automatically from the manifest.

@@ -68,6 +68,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
+name = "arc-swap"
+version = "1.9.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6a3a1fd6f75306b68087b831f025c712524bcb19aad54e557b1129cfa0a2b207"
+dependencies = [
+ "rustversion",
+]
+
+[[package]]
 name = "async-stream"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1152,6 +1161,7 @@ dependencies = [
 name = "sky-worker"
 version = "0.1.0"
 dependencies = [
+ "arc-swap",
  "futures",
  "humantime-serde",
  "hyper",
@@ -1163,6 +1173,7 @@ dependencies = [
  "sky-runtime",
  "thiserror",
  "tokio",
+ "tokio-util",
  "tonic",
  "tower 0.5.3",
  "tracing",
