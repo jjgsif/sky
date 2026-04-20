@@ -150,11 +150,51 @@ interface WithAliases {
     aliasedNullable: NullableString;
 }
 
-// === Edge Cases: Recursive (should error) ===
+// Shared type referenced by multiple interfaces
+interface SharedAddress {
+    street: string;
+    city: string;
+}
+
+interface PersonWithAddress {
+    name: string;
+    home: SharedAddress;
+}
+
+interface CompanyWithAddress {
+    companyName: string;
+    headquarters: SharedAddress;
+}
+
+// Recursive type (now supported via $ref)
 interface TreeNode {
     value: string;
     children: TreeNode[];
 }
+
+interface WithInlineObject {
+    name: string;
+    metadata: {
+        createdAt: string;
+        updatedAt: string;
+    };
+}
+
+// === Registry: Deeply Shared ===
+interface Tag {
+    label: string;
+    color: string;
+}
+
+interface Article {
+    title: string;
+    tags: Tag[];
+}
+
+interface Feed {
+    articles: Article[];
+}
+
 
 export type {
     Primitives,
@@ -184,5 +224,12 @@ export type {
     UnionAlias,
     NullableString,
     WithAliases,
-    TreeNode
+    SharedAddress,
+    PersonWithAddress,
+    CompanyWithAddress,
+    TreeNode,
+    WithInlineObject,
+    Tag,
+    Article,
+    Feed
 };

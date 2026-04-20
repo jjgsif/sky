@@ -1,4 +1,5 @@
 import ts from "typescript";
+import type { SchemaRegistry } from "./registry";
 
 /**
  * JSON Schema representation.
@@ -35,6 +36,7 @@ export interface JsonSchema {
 export function typeToJsonSchema(
     type: ts.Type,
     checker: ts.TypeChecker,
+    registry?: SchemaRegistry,
     seen?: Set<ts.Type>
 ): JsonSchema {
     const visited = seen ?? new Set();
@@ -90,7 +92,7 @@ export function typeToJsonSchema(
 
     // Unions (after boolean check so boolean doesn't split)
     if (type.isUnion()) {
-        return unionToSchema(type, checker, seen);
+        return unionToSchema(type, checker, registry, seen);
     }
 
     // --- Arrays ---
@@ -100,7 +102,7 @@ export function typeToJsonSchema(
         if (typeArgs) {
             return {
                 type: "array",
-                items: typeToJsonSchema(typeArgs, checker, seen),
+                items: typeToJsonSchema(typeArgs, checker, registry, seen),
             };
         }
     }
@@ -108,7 +110,13 @@ export function typeToJsonSchema(
     // --- Object types (interfaces, type aliases, inline objects) ---
 
     if (type.flags & ts.TypeFlags.Object) {
-        return objectToSchema(type, checker, seen);
+        if (registry) {
+            const symbol = type.getSymbol();
+            if (symbol && isNamedType(symbol)) {
+                return registry.register(symbol.name, type, checker, seen);
+            }
+        }
+        return objectToSchema(type, checker, registry, seen);
     }
 
     // --- Unsupported ---
@@ -131,7 +139,7 @@ export function typeToJsonSchema(
  *   - Boolean (which TypeScript represents as true | false union)
  *   - Everything else → oneOf
  */
-function unionToSchema(type: ts.UnionType, checker: ts.TypeChecker, seen?: Set<ts.Type>): JsonSchema {
+function unionToSchema(type: ts.UnionType, checker: ts.TypeChecker, registry?: SchemaRegistry, seen?: Set<ts.Type>): JsonSchema {
     const variants = type.types;
 
     // Step 1: Filter out undefined (handled by optionality)
@@ -164,7 +172,7 @@ function unionToSchema(type: ts.UnionType, checker: ts.TypeChecker, seen?: Set<t
         if (hasBooleanPair && t.flags & ts.TypeFlags.BooleanLiteral) {
             continue;
         }
-        effective.push(typeToJsonSchema(t, checker, seen));
+        effective.push(typeToJsonSchema(t, checker, registry, seen));
     }
 
     // Step 4: Apply null if present
@@ -216,7 +224,7 @@ function unionToSchema(type: ts.UnionType, checker: ts.TypeChecker, seen?: Set<t
  * Walks all properties, recursively converts their types,
  * and tracks which properties are required (non-optional).
  */
-function objectToSchema(type: ts.Type, checker: ts.TypeChecker, seen?: Set<ts.Type>): JsonSchema {
+export function objectToSchema(type: ts.Type, checker: ts.TypeChecker, registry?: SchemaRegistry, seen?: Set<ts.Type>): JsonSchema {
     const properties: Record<string, JsonSchema> = {};
     const required: string[] = [];
 
@@ -228,7 +236,7 @@ function objectToSchema(type: ts.Type, checker: ts.TypeChecker, seen?: Set<ts.Ty
         );
 
         // Convert to JSON Schema recursively
-        properties[prop.name] = typeToJsonSchema(propType, checker, seen);
+        properties[prop.name] = typeToJsonSchema(propType, checker, registry, seen);
 
         // Check if the property is optional (has ? modifier)
         if (!(prop.flags & ts.SymbolFlags.Optional)) {
@@ -281,4 +289,9 @@ function getArrayElementType(
         }
     }
     return undefined;
+}
+
+function isNamedType(symbol: ts.Symbol): boolean {
+    const name = symbol.getName();
+    return !name.startsWith("__");
 }
