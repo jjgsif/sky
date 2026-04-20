@@ -1,5 +1,5 @@
-import { type BodyDescriptor } from "@sky/decorators";
-import { type ZodType, toJSONSchema } from "zod";
+import { Handler, Service, type BodyDescriptor } from "@sky/decorators";
+import { type ZodType, object, toJSONSchema } from "zod";
 
 
 interface ZodBodyDescriptor extends BodyDescriptor {
