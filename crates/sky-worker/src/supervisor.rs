@@ -13,7 +13,6 @@
 /// - No automatic restart on crash (arrives in E1-S7).
 /// - No continuous health polling after readiness.
 /// - Single worker per supervisor (worker pools arrive in E3-S1).
-
 use crate::client::HelloClient;
 use crate::config::WorkerConfig;
 use crate::restart_policy::{FailureOutcome, RestartPolicy};
@@ -25,11 +24,11 @@ use sky_proto::v1::{
 use sky_runtime::WorkerError;
 use std::process::Stdio;
 use std::sync::Arc;
-use tokio::task::JoinHandle;
+use std::time::Instant;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::{Child, Command};
-use tokio::time::{sleep};
-use std::time::Instant;
+use tokio::task::JoinHandle;
+use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 use tonic::transport::Channel;
 use tracing::{debug, info, warn};
@@ -305,12 +304,19 @@ async fn monitor_loop(
     mut restart_policy: RestartPolicy,
     pool_name: &str,
 ) {
+    let worker_started_at = Instant::now();
+
     loop {
         tokio::select! {
-            exit_result = child.wait() => {
+            _exit_result = child.wait() => {
                 if cancel_token.is_cancelled() {
                     info!("Child has exited due to shutdown");
                     break;
+                }
+
+                                let ran_for = Instant::now() - worker_started_at;
+                if ran_for >= config.healthy_reset_duration {
+                    restart_policy.record_healthy_run();
                 }
 
                 match restart_policy.record_failure(Instant::now()) {
@@ -327,12 +333,12 @@ async fn monitor_loop(
                             _ = cancel_token.cancelled() => break,
                         }
 
-                        match spawn_and_ready(&config, &pool_name).await {
+                        match spawn_and_ready(&config, pool_name).await {
                         Ok((new_child, new_channel)) => {
                             channel.store(Arc::new(new_channel));
                             child = new_child;
                         }
-                        Err(e) => {
+                        Err(_e) => {
                             info!("Unable to spawn worker after delay");
                             break;
                         }
@@ -346,11 +352,14 @@ async fn monitor_loop(
         }
     }
 
-
     let grace = config.shutdown_grace + config.force_kill_buffer;
     match tokio::time::timeout(grace, child.wait()).await {
-        Ok(Ok(_status)) => { info!("Worker exited") }
-        Ok(Err(_e)) => { info!("Worker exited") },
+        Ok(Ok(_status)) => {
+            info!("Worker exited")
+        }
+        Ok(Err(_e)) => {
+            info!("Worker exited")
+        }
         Err(_elapsed) => {
             let _ = child.kill().await;
             info!("Grace period reached - killing worker");

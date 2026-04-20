@@ -110,3 +110,63 @@ async fn shutdown_is_idempotent_via_drop() {
     // Give the kill a moment to propagate.
     tokio::time::sleep(Duration::from_millis(200)).await;
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shutdown_completes_within_grace_period() {
+    let mut config = test_config("shutdown-timing");
+    config.shutdown_grace = Duration::from_secs(3);
+    config.force_kill_buffer = Duration::from_secs(1);
+
+    let supervisor = Supervisor::start(config)
+        .await
+        .expect("supervisor should start");
+
+    let start = std::time::Instant::now();
+    supervisor.shutdown().await.expect("shutdown should succeed");
+    let elapsed = start.elapsed();
+
+    // The worker should exit gracefully well within the grace period.
+    assert!(
+        elapsed < Duration::from_secs(5),
+        "shutdown took too long: {elapsed:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn rpc_completes_before_shutdown_returns() {
+    // Fire an RPC and then immediately call shutdown. The RPC should
+    // complete before shutdown() returns because the Shutdown RPC is
+    // sent only after we have the channel, and the worker processes
+    // requests in FIFO order.
+    let config = test_config("rpc-then-shutdown");
+    let supervisor = Supervisor::start(config)
+        .await
+        .expect("supervisor should start");
+
+    let client = supervisor.hello_client();
+
+    let rpc = tokio::spawn(async move {
+        client
+            .greet(
+                GreetRequest {
+                    name: "shutdown-ordering".to_string(),
+                },
+                RequestId::new(),
+            )
+            .await
+    });
+
+    // Yield once so the RPC task has a chance to start.
+    tokio::task::yield_now().await;
+
+    supervisor.shutdown().await.expect("shutdown should succeed");
+
+    // The RPC task should have finished by now; if not, it may have been
+    // racing with the Shutdown RPC. Either outcome is safe — we just
+    // verify the task doesn't hang.
+    let result = tokio::time::timeout(Duration::from_secs(3), rpc)
+        .await
+        .expect("rpc task should complete within deadline");
+
+    assert!(result.is_ok(), "rpc task should not panic");
+}

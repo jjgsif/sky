@@ -42,6 +42,21 @@ impl Default for RequestId {
     }
 }
 
+/// Error returned when a string cannot be parsed as a [`RequestId`].
+#[derive(Debug, thiserror::Error)]
+#[error("invalid request ID: {0}")]
+pub struct ParseRequestIdError(String);
+
+impl TryFrom<&str> for RequestId {
+    type Error = ParseRequestIdError;
+
+    fn try_from(s: &str) -> Result<Self, Self::Error> {
+        Uuid::parse_str(s)
+            .map(Self)
+            .map_err(|_| ParseRequestIdError(s.to_owned()))
+    }
+}
+
 impl fmt::Display for RequestId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{}", self.0)
@@ -88,5 +103,23 @@ mod tests {
         let json = serde_json::to_string(&original).unwrap();
         let parsed: RequestId = serde_json::from_str(&json).unwrap();
         assert_eq!(original, parsed);
+    }
+
+    #[test]
+    fn try_from_valid_uuid_str_succeeds() {
+        let id = RequestId::new();
+        let s = id.to_string();
+        let parsed = RequestId::try_from(s.as_str()).expect("should parse valid UUID string");
+        assert_eq!(id, parsed);
+    }
+
+    #[test]
+    fn try_from_invalid_str_returns_error() {
+        assert!(RequestId::try_from("not-a-uuid").is_err());
+    }
+
+    #[test]
+    fn try_from_empty_str_returns_error() {
+        assert!(RequestId::try_from("").is_err());
     }
 }

@@ -25,3 +25,4 @@ dist/
 bun.lockb
 
 *.sock
+CLAUDE.md

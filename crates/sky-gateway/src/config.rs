@@ -13,6 +13,7 @@
 //! [listen]
 //! address = "127.0.0.1:8080"
 //! body_limit = "1mb"
+//! drain_timeout = "30s"
 //!
 //! [logging]
 //! format = "pretty"
@@ -29,6 +30,7 @@ use serde::{Deserialize, Serialize};
 use sky_worker::WorkerConfig;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::time::Duration;
 use thiserror::Error;
 
 /// Top-level configuration loaded from a sky.toml file.
@@ -58,6 +60,11 @@ pub struct ListenConfig {
     /// Parsed as a human-readable size string ("1mb", "500kb", etc.).
     #[serde(with = "byte_size_serde", default = "default_body_limit")]
     pub body_limit: u64,
+
+    /// How long to wait for in-flight HTTP requests to drain after a
+    /// shutdown signal before forcibly closing connections. Default: 30s.
+    #[serde(with = "humantime_serde", default = "default_drain_timeout")]
+    pub drain_timeout: Duration,
 }
 
 /// Logging and observability configuration.
@@ -84,6 +91,7 @@ impl Default for ListenConfig {
         Self {
             address: default_listen_address(),
             body_limit: default_body_limit(),
+            drain_timeout: default_drain_timeout(),
         }
     }
 }
@@ -123,6 +131,10 @@ fn default_listen_address() -> SocketAddr {
 
 fn default_body_limit() -> u64 {
     1024 * 1024 // 1 MB
+}
+
+fn default_drain_timeout() -> Duration {
+    Duration::from_secs(30)
 }
 
 fn default_log_format() -> LogFormat {
@@ -243,6 +255,39 @@ worker_version = "0.1.0"
         // The from_file path is the one that validates version; we
         // emulate that check manually since we don't want a real file.
         assert_eq!(config.version, "99");
+    }
+
+    #[test]
+    fn parses_drain_timeout() {
+        let toml_src = r#"
+version = "1"
+
+[listen]
+drain_timeout = "45s"
+
+[worker]
+bun_path = "bun"
+worker_script = "./worker/src/index.ts"
+socket_path = "/tmp/sky-worker.sock"
+worker_version = "0.1.0"
+"#;
+        let config: GatewayConfig = toml::from_str(toml_src).unwrap();
+        assert_eq!(config.listen.drain_timeout, Duration::from_secs(45));
+    }
+
+    #[test]
+    fn drain_timeout_defaults_to_30s() {
+        let toml_src = r#"
+version = "1"
+
+[worker]
+bun_path = "bun"
+worker_script = "./worker/src/index.ts"
+socket_path = "/tmp/sky-worker.sock"
+worker_version = "0.1.0"
+"#;
+        let config: GatewayConfig = toml::from_str(toml_src).unwrap();
+        assert_eq!(config.listen.drain_timeout, Duration::from_secs(30));
     }
 
     #[test]

@@ -21,5 +21,5 @@ pub mod tracing_helpers;
 // `sky_runtime::request_id::RequestId`.
 pub use error::{ClientError, ConfigError, FrameworkError, GatewayError, WorkerError};
 pub use handler::HandlerDescriptor;
-pub use request_id::RequestId;
+pub use request_id::{ParseRequestIdError, RequestId};
 pub use tracing_helpers::request_span;

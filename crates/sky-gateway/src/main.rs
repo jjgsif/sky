@@ -73,13 +73,58 @@ async fn main() -> Result<()> {
 
     info!(address = %config.listen.address, "listening for HTTP traffic");
 
-    // Run the server until SIGTERM/SIGINT. Minimal shutdown for Phase 1;
-    // E1-S8 adds the full graceful shutdown sequence with in-flight
-    // request draining.
-    let server = axum::serve(listener, app).with_graceful_shutdown(shutdown_signal());
+    // E1-S8: graceful shutdown with in-flight request draining.
+    //
+    // Ordered sequence:
+    //   1. Signal arrives → stop accepting new connections.
+    //   2. Wait up to drain_timeout for in-flight requests to finish.
+    //   3. Connections drained (or timeout) → server.await returns.
+    //   4. supervisor.shutdown() → Shutdown RPC, worker exits, force-kill if needed.
+    //
+    // By the time supervisor.shutdown() is called, no gRPC calls are in-flight
+    // because all HTTP handlers (which proxy to gRPC) have already completed.
+    let drain_timeout = config.listen.drain_timeout;
 
-    if let Err(e) = server.await {
-        tracing::error!(error = %e, "server exited with error");
+    // Watch channel so both the graceful-shutdown signal and the drain-timeout
+    // timer can independently observe the shutdown trigger.
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
+    tokio::spawn(async move {
+        shutdown_signal().await;
+        let _ = shutdown_tx.send(true);
+    });
+
+    let server = axum::serve(listener, app).with_graceful_shutdown({
+        let mut rx = shutdown_rx.clone();
+        async move {
+            let _ = rx.wait_for(|&v| v).await;
+            info!(
+                drain_timeout_secs = drain_timeout.as_secs(),
+                "shutdown signal received; draining in-flight requests"
+            );
+        }
+    });
+
+    // Race: server drains all connections vs. drain_timeout elapses.
+    // If drain_timeout wins, remaining connections are force-closed by
+    // dropping the server future and we proceed to worker shutdown.
+    tokio::select! {
+        result = server => {
+            if let Err(e) = result {
+                tracing::error!(error = %e, "server exited with error");
+            }
+            info!("HTTP connections drained");
+        }
+        _ = async {
+            let mut rx = shutdown_rx;
+            let _ = rx.wait_for(|&v| v).await;
+            tokio::time::sleep(drain_timeout).await;
+        } => {
+            info!(
+                drain_timeout_secs = drain_timeout.as_secs(),
+                "drain timeout elapsed; forcing connection closure"
+            );
+        }
     }
 
     info!("HTTP server stopped; shutting down worker");
