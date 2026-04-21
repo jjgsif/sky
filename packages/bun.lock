@@ -14,6 +14,7 @@
       "name": "@sky/emitter",
       "version": "0.1.0",
       "dependencies": {
+        "@sky/decorators": "workspace:*",
         "typescript": "^5.6.0",
       },
       "devDependencies": {

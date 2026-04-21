@@ -148,8 +148,11 @@ describe("schema registry", () => {
         const zodSchema: JsonSchema = {
             type: "object",
             properties: {
+                //@ts-ignore
                 street: { type: "string", minLength: 1 },
+                //@ts-ignore
                 city: { type: "string", minLength: 1 },
+                //@ts-ignore
                 zip: { type: "string", pattern: "^[0-9]{5}$" },
             },
             required: ["street", "city", "zip"],
