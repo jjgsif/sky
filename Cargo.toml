@@ -74,6 +74,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # Top-level error convenience for the binary
 anyhow = "1"
 arc-swap = "1.9.1"
+jsonschema = "0.46.2"
 
 # Internal crates - declared here so member crates can reference by `workspace = true`
 sky-runtime = { path = "crates/sky-runtime" }

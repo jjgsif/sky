@@ -46,6 +46,11 @@ pub struct GatewayConfig {
     pub logging: LoggingConfig,
 
     pub worker: WorkerConfig,
+
+    /// Path to the manifest file produced by `sky build`.
+    /// Defaults to ./sky-manifest.json.
+    #[serde(default = "default_manifest_path")]
+    pub manifest_path: PathBuf,
 }
 
 /// HTTP server configuration.
@@ -143,6 +148,10 @@ fn default_log_format() -> LogFormat {
 
 fn default_log_level() -> String {
     "info".to_string()
+}
+
+fn default_manifest_path() -> PathBuf {
+    PathBuf::from("./sky-manifest.json")
 }
 
 /// Human-readable byte size serialization.

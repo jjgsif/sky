@@ -5,8 +5,11 @@
 //! in Phase 2.
 
 use axum::Extension;
+use axum::RequestExt;
 use axum::Router;
+use axum::extract::MatchedPath;
 use axum::extract::{Json, Request, State};
+use axum::http::request;
 use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -15,17 +18,21 @@ use serde::{Deserialize, Serialize};
 use sky_proto::v1::GreetRequest as ProtoGreetRequest;
 use sky_runtime::{ClientError, RequestId};
 use sky_worker::{HelloClient, Supervisor};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::trace::TraceLayer;
 use tracing::{Span, error, info, info_span};
 
+use crate::config::GatewayConfig;
 use crate::errors::HttpError;
+use crate::manifest::Manifest;
 
 /// Shared application state injected into every request handler.
 #[derive(Clone)]
 pub struct AppState {
     pub supervisor: Arc<Supervisor>,
+    pub manifest: Manifest
 }
 
 /// Build the axum Router for Phase 1.
@@ -35,11 +42,11 @@ pub struct AppState {
 ///
 /// Layer processing order (outermost first at runtime):
 ///   request_id_middleware → TraceLayer → RequestBodyLimitLayer → handler
-pub fn build_router(state: AppState, body_limit_bytes: u64) -> Router {
+pub fn build_router(state: AppState, config: GatewayConfig)  -> Router {
     Router::new()
         .route("/hello", post(hello_handler))
         .layer(RequestBodyLimitLayer::new(
-            usize::try_from(body_limit_bytes).unwrap_or(usize::MAX),
+            usize::try_from(config.listen.body_limit).unwrap_or(usize::MAX),
         ))
         .layer(
             TraceLayer::new_for_http()
@@ -48,6 +55,7 @@ pub fn build_router(state: AppState, body_limit_bytes: u64) -> Router {
                 .on_failure(on_failure_log),
         )
         .layer(middleware::from_fn(request_id_middleware))
+        .layer(middleware::from_fn_with_state(state.clone(), validate_json_request))
         .with_state(state)
 }
 
@@ -71,6 +79,22 @@ async fn request_id_middleware(mut request: Request, next: Next) -> Response {
         .insert("x-request-id", format_header_value(request_id));
 
     response
+}
+
+async fn validate_json_request(
+    State(state): State<AppState>,
+    request: Request,
+    next: Next
+) -> Response {
+    let stripped_path = if let Some(matched_path) = request.extensions().get::<MatchedPath>() {
+        matched_path.as_str().to_owned()
+    } else {
+        request.uri().path().to_owned()
+    };
+
+    state.manifest.routes().iter().find(|(_, path, descriptor)| stripped_path == *path );
+
+    next.run(request).await
 }
 
 /// Span factory for `TraceLayer` that includes the request ID, HTTP method,

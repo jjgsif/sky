@@ -7,9 +7,11 @@
 mod config;
 mod errors;
 mod http;
+mod manifest;
 
 use crate::config::{GatewayConfig, LogFormat};
 use crate::http::{AppState, build_router};
+use crate::manifest::Manifest;
 use anyhow::{Context, Result};
 use clap::Parser;
 use sky_worker::Supervisor;
@@ -42,6 +44,9 @@ async fn main() -> Result<()> {
     let config = GatewayConfig::from_file(&cli.config)
         .with_context(|| format!("failed to load config from {}", cli.config.display()))?;
 
+    let manifest = Manifest::from_file(&config.manifest_path)
+        .with_context(|| format!("failed to load config from {}", &config.manifest_path.display()))?;
+
     // Now that we have the config, set up tracing with its preferences.
     init_tracing(&config)?;
 
@@ -63,8 +68,9 @@ async fn main() -> Result<()> {
     // Build the axum app.
     let state = AppState {
         supervisor: supervisor.clone(),
+        manifest: manifest.clone()
     };
-    let app = build_router(state, config.listen.body_limit);
+    let app = build_router(state, config.clone());
 
     // Bind the TCP listener.
     let listener = tokio::net::TcpListener::bind(config.listen.address)
