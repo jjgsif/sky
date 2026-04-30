@@ -6,7 +6,7 @@
 //! for future framework-level concerns (retries, circuit breaking,
 //! tracing span attachment).
 
-use sky_proto::v1::{GreetRequest, GreetResponse, hello_service_client::HelloServiceClient};
+use sky_proto::v1::{GreetRequest, hello_service_client::HelloServiceClient, SkyResponse};
 use sky_runtime::{RequestId, WorkerError};
 use tonic::transport::Channel;
 
@@ -42,7 +42,7 @@ impl HelloClient {
         &self,
         request: GreetRequest,
         request_id: RequestId,
-    ) -> Result<GreetResponse, WorkerError> {
+    ) -> Result<SkyResponse, WorkerError> {
         // Clone the client for this call. tonic's generated clients
         // require &mut self for RPC methods; cloning is cheap because
         // Channel is reference-counted internally.

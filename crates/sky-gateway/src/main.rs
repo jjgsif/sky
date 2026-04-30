@@ -5,13 +5,14 @@
 //! the worker over the Connect protocol.
 
 mod config;
-mod errors;
-mod http;
 mod manifest;
+mod validation;
+mod router;
 
 use crate::config::{GatewayConfig, LogFormat};
-use crate::http::{AppState, build_router};
 use crate::manifest::Manifest;
+use crate::router::{RouterState, build_manifest_router};
+use crate::validation::SchemaRegistry;
 use anyhow::{Context, Result};
 use clap::Parser;
 use sky_worker::Supervisor;
@@ -44,7 +45,7 @@ async fn main() -> Result<()> {
     let config = GatewayConfig::from_file(&cli.config)
         .with_context(|| format!("failed to load config from {}", cli.config.display()))?;
 
-    let manifest = Manifest::from_file(&config.manifest_path)
+    let _manifest = Manifest::from_file(&config.manifest_path)
         .with_context(|| format!("failed to load config from {}", &config.manifest_path.display()))?;
 
     // Now that we have the config, set up tracing with its preferences.
@@ -66,11 +67,23 @@ async fn main() -> Result<()> {
     info!("worker supervisor ready; starting HTTP server");
 
     // Build the axum app.
-    let state = AppState {
-        supervisor: supervisor.clone(),
-        manifest: manifest.clone()
+    // Load manifest
+    let manifest = Manifest::from_file(&config.manifest_path)
+        .expect("failed to load manifest");
+
+    // Compile schemas
+    let schema_registry = SchemaRegistry::from_manifest(&manifest)
+        .expect("failed to compile schemas");
+
+    // Build router state
+    let router_state = RouterState {
+        manifest: Arc::new(manifest),
+        schema_registry: Arc::new(schema_registry),
+        channel: supervisor.channel.load_full().as_ref().clone() // however you expose the channel
     };
-    let app = build_router(state, config.clone());
+
+    // Build the manifest-driven router
+    let app = build_manifest_router(router_state);
 
     // Bind the TCP listener.
     let listener = tokio::net::TcpListener::bind(config.listen.address)

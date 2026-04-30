@@ -1,0 +1,117 @@
+{
+  "version": "1",
+  "hash": "abc123",
+  "emitted_at": "2026-04-29T12:00:00Z",
+  "services": [
+    {
+      "name": "userService",
+      "className": "UserService",
+      "lifetime": "request",
+      "dependencies": [],
+      "handlers": [
+        {
+          "name": "createUser",
+          "method": "POST",
+          "path": "/users",
+          "status": 201,
+          "validate": true,
+          "extract": [
+            { "source": "body" }
+          ]
+        },
+        {
+          "name": "getUser",
+          "method": "GET",
+          "path": "/users/:id",
+          "status": 200,
+          "validate": false,
+          "extract": [
+            { "source": "param", "name": "id" }
+          ]
+        },
+        {
+          "name": "listUsers",
+          "method": "GET",
+          "path": "/users",
+          "status": 200,
+          "validate": false,
+          "extract": [
+            { "source": "query", "name": "page" },
+            { "source": "query", "name": "limit" }
+          ]
+        },
+        {
+          "name": "updateUser",
+          "method": "PUT",
+          "path": "/users/:id",
+          "status": 200,
+          "validate": true,
+          "extract": [
+            { "source": "param", "name": "id" },
+            { "source": "body" }
+          ]
+        },
+        {
+          "name": "deleteUser",
+          "method": "DELETE",
+          "path": "/users/:id",
+          "status": 204,
+          "validate": false,
+          "extract": [
+            { "source": "param", "name": "id" }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "healthService",
+      "className": "HealthService",
+      "lifetime": "singleton",
+      "dependencies": [],
+      "handlers": [
+        {
+          "name": "check",
+          "method": "GET",
+          "path": "/health",
+          "status": 200,
+          "validate": false,
+          "extract": []
+        }
+      ]
+    },
+    {
+      "name": "adminService",
+      "className": "AdminService",
+      "lifetime": "request",
+      "dependencies": [],
+      "handlers": [
+        {
+          "name": "listAdminUsers",
+          "method": "GET",
+          "path": "/users",
+          "status": 200,
+          "validate": false,
+          "extract": [
+            { "source": "header", "name": "x-admin-token" },
+            { "source": "query", "name": "page" }
+          ]
+        }
+      ],
+      "group": {
+        "prefix": "/api/admin",
+        "middleware": ["AuthMiddleware"]
+      }
+    }
+  ],
+  "middleware": [],
+  "schemas": {
+    "CreateUserRequest": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string" }
+      },
+      "required": ["name", "email"]
+    }
+  }
+}

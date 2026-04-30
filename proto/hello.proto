@@ -2,17 +2,12 @@ syntax = "proto3";
 
 package sky.v1;
 
-// HelloService exists to validate the boundary protocol end-to-end.
-// It is demo code and will be removed once real service definitions
-// arrive with the manifest emitter in Phase 2.
+import "sky_response.proto";
+
 service HelloService {
-  rpc Greet(GreetRequest) returns (GreetResponse);
+  rpc Greet(GreetRequest) returns (SkyResponse);
 }
 
 message GreetRequest {
-  string name = 1;
-}
-
-message GreetResponse {
-  string message = 1;
+  bytes body = 1;
 }

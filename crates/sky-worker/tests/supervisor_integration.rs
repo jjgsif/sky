@@ -64,17 +64,19 @@ async fn start_greet_shutdown_happy_path() {
     let response = client
         .greet(
             GreetRequest {
-                name: "Integration".to_string(),
+                body: "Integration".to_string().into_bytes(),
             },
             RequestId::new(),
         )
         .await
         .expect("greet should succeed");
+    
+    let message = String::from_utf8(response.body).unwrap();
 
     assert!(
-        response.message.contains("Integration"),
+        message.contains("Integration"),
         "expected response to include greeted name, got: {}",
-        response.message
+        message
     );
 
     supervisor
@@ -149,7 +151,7 @@ async fn rpc_completes_before_shutdown_returns() {
         client
             .greet(
                 GreetRequest {
-                    name: "shutdown-ordering".to_string(),
+                    body: "shutdown-ordering".to_string().into_bytes(),
                 },
                 RequestId::new(),
             )

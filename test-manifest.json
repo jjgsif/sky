@@ -1,0 +1,156 @@
+{
+  "version": "1",
+  "hash": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "emitted_at": "2026-04-27T12:00:00Z",
+  "services": [
+    {
+      "name": "userService",
+      "className": "UserService",
+      "lifetime": "request",
+      "dependencies": [],
+      "handlers": [
+        {
+          "name": "createUser",
+          "method": "POST",
+          "path": "/users",
+          "status": 201,
+          "validate": true,
+          "extract": [
+            {
+              "source": "body",
+              "position": 0,
+              "schema": { "$ref": "#/schemas/CreateUserRequest" }
+            }
+          ],
+          "response": { "$ref": "#/schemas/UserResponse" }
+        },
+        {
+          "name": "getUser",
+          "method": "GET",
+          "path": "/users/:id",
+          "status": 200,
+          "validate": false,
+          "extract": [
+            { "source": "param", "name": "id", "position": 0 }
+          ],
+          "response": { "$ref": "#/schemas/UserResponse" }
+        },
+        {
+          "name": "listUsers",
+          "method": "GET",
+          "path": "/users",
+          "status": 200,
+          "validate": false,
+          "extract": [
+            { "source": "query", "name": "page", "position": 0 },
+            { "source": "query", "name": "limit", "position": 1 }
+          ]
+        },
+        {
+          "name": "updateUser",
+          "method": "PUT",
+          "path": "/users/:id",
+          "status": 200,
+          "validate": true,
+          "extract": [
+            { "source": "param", "name": "id", "position": 0 },
+            { "source": "body", "position": 1, "schema": { "$ref": "#/schemas/UpdateUserRequest" } }
+          ],
+          "response": { "$ref": "#/schemas/UserResponse" }
+        },
+        {
+          "name": "deleteUser",
+          "method": "DELETE",
+          "path": "/users/:id",
+          "status": 204,
+          "validate": false,
+          "extract": [
+            { "source": "param", "name": "id", "position": 0 }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "healthService",
+      "className": "HealthService",
+      "lifetime": "singleton",
+      "dependencies": [],
+      "handlers": [
+        {
+          "name": "check",
+          "method": "GET",
+          "path": "/health",
+          "status": 200,
+          "validate": false,
+          "extract": []
+        }
+      ]
+    },
+    {
+      "name": "adminService",
+      "className": "AdminService",
+      "lifetime": "request",
+      "dependencies": [],
+      "handlers": [
+        {
+          "name": "listAdminUsers",
+          "method": "GET",
+          "path": "/users",
+          "status": 200,
+          "validate": false,
+          "extract": [
+            { "source": "header", "name": "x-admin-token", "position": 0 }
+          ]
+        }
+      ],
+      "group": {
+        "prefix": "/api/admin",
+        "middleware": ["AuthMiddleware"]
+      }
+    }
+  ],
+  "middleware": [
+    {
+      "name": "auth",
+      "className": "AuthMiddleware",
+      "global": false,
+      "order": 10,
+      "kind": "user"
+    },
+    {
+      "name": "logging",
+      "className": "LoggingMiddleware",
+      "global": true,
+      "order": 0,
+      "kind": "native"
+    }
+  ],
+  "schemas": {
+    "CreateUserRequest": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "role": { "enum": ["admin", "member"], "type": "string" }
+      },
+      "required": ["name", "email"]
+    },
+    "UpdateUserRequest": {
+      "type": "object",
+      "properties": {
+        "name": { "type": "string" },
+        "email": { "type": "string", "format": "email" }
+      }
+    },
+    "UserResponse": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string" }
+      },
+      "required": ["id", "name", "email", "role"]
+    }
+  }
+}

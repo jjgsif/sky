@@ -1,0 +1,52 @@
+{
+  "version": "1",
+  "hash": "sha256:af6025844bd089217426ce9c6e150420181d7f7b76a7e905222030d522ade704",
+  "emitted_at": "2026-04-30T04:06:30.036Z",
+  "services": [
+    {
+      "name": "HelloService",
+      "className": "HelloService",
+      "lifetime": "singleton",
+      "dependencies": [],
+      "handlers": [
+        {
+          "name": "greet",
+          "method": "POST",
+          "path": "/hello",
+          "status": 201,
+          "validate": true,
+          "extract": [
+            {
+              "source": "body",
+              "position": 0,
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name"
+                ]
+              }
+            }
+          ],
+          "response": {
+            "type": "object",
+            "properties": {
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "middleware": [],
+  "schemas": {}
+}

@@ -1,0 +1,12 @@
+syntax = "proto3";
+
+package sky.v1;
+
+import "sky_response.proto";
+
+service HealthService {
+  rpc Check(CheckRequest) returns (SkyResponse);
+}
+
+message CheckRequest {
+}

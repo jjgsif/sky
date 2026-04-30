@@ -1896,6 +1896,7 @@ dependencies = [
  "clap",
  "humantime-serde",
  "jsonschema",
+ "prost",
  "serde",
  "serde_json",
  "sky-proto",
@@ -1904,9 +1905,12 @@ dependencies = [
  "thiserror",
  "tokio",
  "toml",
+ "tonic",
+ "tower 0.5.3",
  "tower-http",
  "tracing",
  "tracing-subscriber",
+ "uuid",
 ]
 
 [[package]]

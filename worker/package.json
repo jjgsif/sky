@@ -1,26 +1,36 @@
 {
-  "name": "sky-worker",
+  "name": "sky",
+  "module": "index.ts",
   "version": "0.1.0",
-  "description": "Sky framework TypeScript worker",
   "type": "module",
   "private": true,
+  "bin": {
+    "sky": "./src/cli.ts"
+  },
   "scripts": {
     "generate": "buf generate",
-    "start": "bun run src/index.ts",
-    "dev": "bun --watch run src/index.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@blue.ts/di": "^0.2.0",
     "@bufbuild/protobuf": "^2.2.0",
     "@connectrpc/connect": "^2.0.0",
     "@connectrpc/connect-node": "^2.0.0",
-    "pino": "^9.5.0"
+    "@types/node": "^25.6.0",
+    "@types/typescript": "^2.0.0",
+    "pino": "^9.5.0",
+    "typescript": "^6.0.3",
+    "zod": "^4.4.1"
   },
   "devDependencies": {
     "@bufbuild/buf": "^1.47.0",
     "@bufbuild/protoc-gen-es": "^2.2.0",
     "@types/bun": "latest",
-    "pino-pretty": "^11.3.0",
-    "typescript": "^5.6.0"
+    "pino-pretty": "^11.3.0"
+  },
+  "exports": {
+    "./runtime": "./src/runtime/index.ts",
+    "./decorators": "./src/decorators/index.ts",
+    "./emitter": "./src/emitter/index.ts"
   }
 }

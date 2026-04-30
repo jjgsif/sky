@@ -1,0 +1,35 @@
+syntax = "proto3";
+
+package sky.v1;
+
+import "sky_response.proto";
+
+service UserService {
+  rpc CreateUser(CreateUserRequest) returns (SkyResponse);
+  rpc GetUser(GetUserRequest) returns (SkyResponse);
+  rpc ListUsers(ListUsersRequest) returns (SkyResponse);
+  rpc UpdateUser(UpdateUserRequest) returns (SkyResponse);
+  rpc DeleteUser(DeleteUserRequest) returns (SkyResponse);
+}
+
+message CreateUserRequest {
+  bytes body = 1;
+}
+
+message GetUserRequest {
+  string id = 1;
+}
+
+message ListUsersRequest {
+  string page = 1;
+  string limit = 2;
+}
+
+message UpdateUserRequest {
+  string id = 1;
+  bytes body = 2;
+}
+
+message DeleteUserRequest {
+  string id = 1;
+}

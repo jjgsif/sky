@@ -1,173 +1,285 @@
-// crates/sky-gateway/src/manifest.rs
+//! Manifest types and loader for the Sky gateway.
+//!
+//! The TypeScript emitter (`sky build`) produces a `sky-manifest.json`
+//! file describing every service, handler, middleware, route group,
+//! and JSON Schema in the application. This module defines the Rust
+//! types that mirror that JSON structure, a loader that reads and
+//! validates the manifest at gateway startup, and helper methods used
+//! by the router and validator subsystems.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::Path;
 use thiserror::Error;
 
+// ──────────────────────────────────────────────
+// Error types
+// ──────────────────────────────────────────────
 
-/// Top-level manifest produced by `sky build`.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Manifest {
-    pub version: String,
-    pub hash: String,
-    pub emitted_at: String,
-    pub services: Vec<ServiceDescriptor>,
-    pub middleware: Vec<MiddlewareDescriptor>,
-    pub schemas: HashMap<String, JsonSchema>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ServiceDescriptor {
-    pub name: String,
-    #[serde(rename = "className")]
-    pub class_name: String,
-    pub lifetime: String,
-    pub dependencies: Vec<DependencyDescriptor>,
-    pub handlers: Vec<HandlerDescriptor>,
-    pub group: Option<GroupDescriptor>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DependencyDescriptor {
-    #[serde(rename = "type")]
-    pub dep_type: String,
-    pub value: String,
-    pub position: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HandlerDescriptor {
-    pub name: String,
-    pub method: String,
-    pub path: String,
-    pub status: u16,
-    pub validate: bool,
-    pub extract: Vec<ExtractDescriptor>,
-    pub response: Option<JsonSchema>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ExtractDescriptor {
-    pub source: String,
-    pub name: Option<String>,
-    pub position: u32,
-    pub schema: Option<JsonSchema>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MiddlewareDescriptor {
-    pub name: String,
-    #[serde(rename = "className")]
-    pub class_name: String,
-    pub global: bool,
-    pub order: i32,
-    pub kind: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GroupDescriptor {
-    pub prefix: String,
-    pub middleware: Vec<String>,
-}
-
-/// A JSON Schema value.
-///
-/// We store this as a semi-structured type rather than raw
-/// serde_json::Value so we can access common fields directly.
-/// Less common fields are captured in `extra`.
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-pub struct JsonSchema {
-    #[serde(rename = "type", skip_serializing_if = "Option::is_none")]
-    pub schema_type: Option<SchemaType>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub properties: Option<HashMap<String, JsonSchema>>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub required: Option<Vec<String>>,
-
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub items: Option<Box<JsonSchema>>,
-
-    #[serde(rename = "enum", skip_serializing_if = "Option::is_none")]
-    pub enum_values: Option<Vec<serde_json::Value>>,
-
-    #[serde(rename = "const", skip_serializing_if = "Option::is_none")]
-    pub const_value: Option<serde_json::Value>,
-
-    #[serde(rename = "oneOf", skip_serializing_if = "Option::is_none")]
-    pub one_of: Option<Vec<JsonSchema>>,
-
-    #[serde(rename = "$ref", skip_serializing_if = "Option::is_none")]
-    pub ref_path: Option<String>,
-}
-
-/// JSON Schema type can be a single string or an array of strings
-/// (e.g., ["string", "null"] for nullable types).
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum SchemaType {
-    Single(String),
-    Multiple(Vec<String>),
-}
-
-/// Errors that can occur when loading a manifest.
+/// Errors that can occur when loading or validating a manifest.
 #[derive(Debug, Error)]
 pub enum ManifestError {
-    #[error("failed to read manifest file {path:?}: {source}")]
+    #[error("failed to read manifest file {path}: {source}")]
     Read {
-        path: PathBuf,
+        path: String,
         #[source]
         source: std::io::Error,
     },
 
-    #[error("failed to parse manifest: {0}")]
+    #[error("failed to parse manifest JSON: {0}")]
     Parse(#[from] serde_json::Error),
 
-    #[error("unsupported manifest version '{0}'; expected '1'")]
-    UnsupportedVersion(String),
+    #[error("unsupported manifest version '{found}'; expected '{expected}'")]
+    UnsupportedVersion { found: String, expected: String },
 
     #[error("duplicate route: {method} {path}")]
     DuplicateRoute { method: String, path: String },
 
-    #[error("unresolved schema reference: {0}")]
+    #[error("unresolved schema $ref: {0}")]
     UnresolvedRef(String),
+
+    #[error("handler '{handler}' on service '{service}' has non-contiguous parameter positions: {details}")]
+    NonContiguousParams {
+        service: String,
+        handler: String,
+        details: String,
+    },
 }
 
+// ──────────────────────────────────────────────
+// Top-level manifest
+// ──────────────────────────────────────────────
+
+/// The currently supported manifest version.
+const MANIFEST_VERSION: &str = "1";
+
+/// Top-level manifest produced by `sky build`.
+///
+/// This is the Rust-side representation of `sky-manifest.json`.
+/// Every field maps 1:1 to the JSON the TypeScript emitter outputs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Manifest {
+    /// Schema version string. Must be "1" for this release.
+    pub version: String,
+
+    /// Content hash of the source files used to produce this manifest.
+    /// Used for change detection by `sky build --watch`.
+    pub hash: String,
+
+    /// ISO 8601 timestamp of when the manifest was emitted.
+    pub emitted_at: String,
+
+    /// All decorated service classes discovered by the emitter.
+    pub services: Vec<ServiceDescriptor>,
+
+    /// All middleware classes (global and scoped).
+    pub middleware: Vec<MiddlewareDescriptor>,
+
+    /// Named JSON Schema definitions, referenced via `$ref` from
+    /// handler parameters and responses.
+    pub schemas: HashMap<String, serde_json::Value>,
+}
+
+// ──────────────────────────────────────────────
+// Service & handler descriptors
+// ──────────────────────────────────────────────
+
+/// A decorated `@Service` class.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServiceDescriptor {
+    /// Service name (typically the class name, lowercased).
+    pub name: String,
+
+    /// Original class name as it appears in source.
+    #[serde(rename = "className")]
+    pub class_name: String,
+
+    /// DI lifetime: "request", "singleton", or "transient".
+    pub lifetime: String,
+
+    /// Constructor dependencies for DI resolution.
+    pub dependencies: Vec<DependencyDescriptor>,
+
+    /// HTTP handlers declared on this service.
+    pub handlers: Vec<HandlerDescriptor>,
+
+    /// Optional route group (from `@Group`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub group: Option<GroupDescriptor>,
+}
+
+/// A constructor dependency for DI.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DependencyDescriptor {
+    /// Dependency kind: "service", "config", etc.
+    #[serde(rename = "type")]
+    pub dep_type: String,
+
+    /// The token or class name to resolve.
+    pub value: String,
+
+    /// Constructor parameter position (0-indexed).
+    pub position: u32,
+}
+
+/// A single `@Handler`-decorated method on a service.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HandlerDescriptor {
+    /// Method name on the service class.
+    pub name: String,
+
+    /// HTTP method (GET, POST, PUT, PATCH, DELETE).
+    pub method: String,
+
+    /// Route path, possibly with parameters (e.g., "/users/:id").
+    pub path: String,
+
+    /// HTTP status code to return on success.
+    #[serde(default = "default_status")]
+    pub status: u16,
+
+    /// Whether JSON Schema validation is enabled for this handler.
+    #[serde(default = "default_validate")]
+    pub validate: bool,
+
+    /// Parameter extraction descriptors.
+    pub extract: Vec<ExtractDescriptor>,
+
+    /// Optional response schema for documentation / future validation.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub response: Option<serde_json::Value>,
+}
+
+fn default_status() -> u16 {
+    200
+}
+
+fn default_validate() -> bool {
+    true
+}
+
+/// Describes how a single handler parameter is extracted from the request.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExtractDescriptor {
+    /// Source of the value: "body", "query", "param", "header".
+    pub source: String,
+
+    /// Name of the query param / path param / header.
+    /// `None` for body parameters.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+
+    /// Parameter position in the handler method signature (0-indexed).
+    pub position: u32,
+
+    /// JSON Schema for this parameter (inline or `$ref`).
+    /// Present for body parameters; typically absent for scalar extracts.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub schema: Option<serde_json::Value>,
+}
+
+// ──────────────────────────────────────────────
+// Middleware & groups
+// ──────────────────────────────────────────────
+
+/// A `@Middleware`-decorated class.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MiddlewareDescriptor {
+    /// Middleware name.
+    pub name: String,
+
+    /// Original class name.
+    #[serde(rename = "className")]
+    pub class_name: String,
+
+    /// Whether this middleware applies globally.
+    #[serde(default)]
+    pub global: bool,
+
+    /// Execution order (lower runs first).
+    #[serde(default)]
+    pub order: i32,
+
+    /// "user" for app-defined, "native" for framework-provided.
+    #[serde(default = "default_kind")]
+    pub kind: String,
+}
+
+fn default_kind() -> String {
+    "user".to_string()
+}
+
+/// A `@Group`-decorated route group.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GroupDescriptor {
+    /// URL prefix applied to all handlers in the group.
+    pub prefix: String,
+
+    /// Names of middleware applied to this group.
+    #[serde(default)]
+    pub middleware: Vec<String>,
+}
+
+// ──────────────────────────────────────────────
+// Loading & validation
+// ──────────────────────────────────────────────
+
 impl Manifest {
-    /// Load and validate a manifest from a JSON file.
-    pub fn from_file(path: &PathBuf) -> Result<Self, ManifestError> {
+    /// Load a manifest from a JSON file on disk.
+    ///
+    /// Reads the file, deserializes into typed structs, then runs
+    /// all validation checks. Returns an error with an actionable
+    /// message if anything is wrong.
+    pub fn from_file(path: &Path) -> Result<Self, ManifestError> {
         let contents = std::fs::read_to_string(path).map_err(|e| ManifestError::Read {
-            path: path.clone(),
+            path: path.display().to_string(),
             source: e,
         })?;
 
-        let manifest: Self = serde_json::from_str(&contents)?;
+        Self::from_json(&contents)
+    }
 
-        if manifest.version != "1" {
-            return Err(ManifestError::UnsupportedVersion(manifest.version));
+    /// Parse and validate a manifest from a JSON string.
+    ///
+    /// Useful for testing without touching the filesystem.
+    pub fn from_json(json: &str) -> Result<Self, ManifestError> {
+        let manifest: Self = serde_json::from_str(json)?;
+
+        if manifest.version != MANIFEST_VERSION {
+            return Err(ManifestError::UnsupportedVersion {
+                found: manifest.version,
+                expected: MANIFEST_VERSION.to_string(),
+            });
         }
 
         manifest.validate()?;
-
         Ok(manifest)
     }
 
-    /// Validate internal consistency of the manifest.
+    /// Run all internal consistency checks.
     fn validate(&self) -> Result<(), ManifestError> {
-        // Check for duplicate routes
-        let mut seen_routes = std::collections::HashSet::new();
+        self.check_duplicate_routes()?;
+        self.check_schema_refs()?;
+        self.check_param_positions()?;
+        Ok(())
+    }
+
+    /// Ensure no two handlers resolve to the same (method, full_path).
+    fn check_duplicate_routes(&self) -> Result<(), ManifestError> {
+        let mut seen = std::collections::HashSet::new();
+
         for service in &self.services {
             let prefix = service
                 .group
                 .as_ref()
                 .map(|g| g.prefix.as_str())
                 .unwrap_or("");
+
             for handler in &service.handlers {
                 let full_path = format!("{}{}", prefix, handler.path);
-                let route_key = format!("{} {}", handler.method, full_path);
-                if !seen_routes.insert(route_key.clone()) {
+                let route_key = format!("{} {}", handler.method.to_uppercase(), full_path);
+
+                if !seen.insert(route_key.clone()) {
                     return Err(ManifestError::DuplicateRoute {
                         method: handler.method.clone(),
                         path: full_path,
@@ -176,16 +288,21 @@ impl Manifest {
             }
         }
 
-        // Check that all $ref references resolve
+        Ok(())
+    }
+
+    /// Verify that every `$ref` in handler schemas resolves to an
+    /// entry in `self.schemas`.
+    fn check_schema_refs(&self) -> Result<(), ManifestError> {
         for service in &self.services {
             for handler in &service.handlers {
                 for extract in &handler.extract {
                     if let Some(schema) = &extract.schema {
-                        self.validate_schema_refs(schema)?;
+                        self.walk_refs(schema)?;
                     }
                 }
                 if let Some(response) = &handler.response {
-                    self.validate_schema_refs(response)?;
+                    self.walk_refs(response)?;
                 }
             }
         }
@@ -193,63 +310,123 @@ impl Manifest {
         Ok(())
     }
 
-    /// Recursively validate that all $ref references in a schema
-    /// point to entries in the schemas section.
-    fn validate_schema_refs(&self, schema: &JsonSchema) -> Result<(), ManifestError> {
-        if let Some(ref_path) = &schema.ref_path {
-            let name = ref_path.strip_prefix("#/schemas/").unwrap_or(ref_path);
-            if !self.schemas.contains_key(name) {
-                return Err(ManifestError::UnresolvedRef(ref_path.clone()));
+    /// Recursively walk a JSON Schema value looking for `$ref` keys
+    /// and verifying they resolve against `self.schemas`.
+    fn walk_refs(&self, value: &serde_json::Value) -> Result<(), ManifestError> {
+        match value {
+            serde_json::Value::Object(map) => {
+                if let Some(serde_json::Value::String(ref_path)) = map.get("$ref") {
+                    let name = ref_path
+                        .strip_prefix("#/schemas/")
+                        .unwrap_or(ref_path.as_str());
+                    if !self.schemas.contains_key(name) {
+                        return Err(ManifestError::UnresolvedRef(ref_path.clone()));
+                    }
+                }
+
+                for v in map.values() {
+                    self.walk_refs(v)?;
+                }
             }
-        }
-
-        if let Some(properties) = &schema.properties {
-            for prop_schema in properties.values() {
-                self.validate_schema_refs(prop_schema)?;
+            serde_json::Value::Array(arr) => {
+                for v in arr {
+                    self.walk_refs(v)?;
+                }
             }
+            _ => {}
         }
 
-        if let Some(items) = &schema.items {
-            self.validate_schema_refs(items)?;
-        }
+        Ok(())
+    }
 
-        if let Some(one_of) = &schema.one_of {
-            for variant in one_of {
-                self.validate_schema_refs(variant)?;
+    /// Verify handler parameter positions are contiguous (0, 1, 2, …).
+    fn check_param_positions(&self) -> Result<(), ManifestError> {
+        for service in &self.services {
+            for handler in &service.handlers {
+                if handler.extract.is_empty() {
+                    continue;
+                }
+
+                let mut positions: Vec<u32> =
+                    handler.extract.iter().map(|e| e.position).collect();
+                positions.sort_unstable();
+                positions.dedup();
+
+                let expected: Vec<u32> = (0..positions.len() as u32).collect();
+                if positions != expected {
+                    return Err(ManifestError::NonContiguousParams {
+                        service: service.name.clone(),
+                        handler: handler.name.clone(),
+                        details: format!("found positions {:?}, expected {:?}", positions, expected),
+                    });
+                }
             }
         }
 
         Ok(())
     }
 
-    /// Get all routes as (method, full_path, handler) tuples.
-    /// Resolves group prefixes.
-    pub fn routes(&self) -> Vec<(&str, String, &HandlerDescriptor)> {
+    /// Iterate all routes as `(http_method, full_path, service, handler)` tuples.
+    ///
+    /// Resolves group prefixes. Used by the dynamic router (E2-S8)
+    /// to register axum routes at startup.
+    #[allow(dead_code)]
+    pub fn routes(&self) -> Vec<RouteEntry<'_>> {
         let mut routes = Vec::new();
+
         for service in &self.services {
             let prefix = service
                 .group
                 .as_ref()
                 .map(|g| g.prefix.as_str())
                 .unwrap_or("");
+
             for handler in &service.handlers {
                 let full_path = format!("{}{}", prefix, handler.path);
-                routes.push((handler.method.as_str(), full_path, handler));
+                routes.push(RouteEntry {
+                    method: &handler.method,
+                    path: full_path,
+                    service,
+                    handler,
+                });
             }
         }
+
         routes
     }
+
+    /// Resolve a `$ref` string like `"#/schemas/CreateUserRequest"`
+    /// to the actual schema value.
+    pub fn resolve_schema(&self, ref_path: &str) -> Option<&serde_json::Value> {
+        let name = ref_path.strip_prefix("#/schemas/").unwrap_or(ref_path);
+        self.schemas.get(name)
+    }
 }
+
+/// A resolved route with references back into the manifest.
+#[derive(Debug)]
+#[allow(dead_code)]
+pub struct RouteEntry<'a> {
+    pub method: &'a str,
+    pub path: String,
+    pub service: &'a ServiceDescriptor,
+    pub handler: &'a HandlerDescriptor,
+}
+
+// ──────────────────────────────────────────────
+// Tests
+// ──────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn minimal_manifest_json() -> String {
+    /// Helper: build a minimal valid manifest JSON string.
+    fn minimal_manifest() -> String {
         serde_json::json!({
             "version": "1",
-            "hash": "sha256:abc123",
-            "emitted_at": "2026-04-19T00:00:00Z",
+            "hash": "abc123",
+            "emitted_at": "2026-04-27T00:00:00Z",
             "services": [],
             "middleware": [],
             "schemas": {}
@@ -257,258 +434,48 @@ mod tests {
         .to_string()
     }
 
-    fn full_manifest_json() -> String {
+    /// Helper: build a manifest with one service and one handler.
+    fn single_handler_manifest(
+        method: &str,
+        path: &str,
+        extract: serde_json::Value,
+    ) -> String {
         serde_json::json!({
             "version": "1",
-            "hash": "sha256:abc123",
-            "emitted_at": "2026-04-19T00:00:00Z",
-            "services": [
-                {
-                    "name": "UserService",
-                    "className": "UserService",
-                    "lifetime": "scoped",
-                    "dependencies": [
-                        { "type": "class", "value": "DatabaseClient", "position": 0 }
-                    ],
-                    "handlers": [
-                        {
-                            "name": "createUser",
-                            "method": "POST",
-                            "path": "/",
-                            "status": 201,
-                            "validate": true,
-                            "extract": [
-                                {
-                                    "source": "body",
-                                    "position": 0,
-                                    "schema": { "$ref": "#/schemas/CreateUserInput" }
-                                },
-                                {
-                                    "source": "header",
-                                    "name": "x-tenant-id",
-                                    "position": 1
-                                }
-                            ],
-                            "response": { "$ref": "#/schemas/UserResponse" }
-                        },
-                        {
-                            "name": "getUser",
-                            "method": "GET",
-                            "path": "/:id",
-                            "status": 200,
-                            "validate": true,
-                            "extract": [
-                                {
-                                    "source": "param",
-                                    "name": "id",
-                                    "position": 0
-                                }
-                            ],
-                            "response": { "$ref": "#/schemas/UserResponse" }
-                        }
-                    ],
-                    "group": {
-                        "prefix": "/api/v1/users",
-                        "middleware": ["AuthMiddleware"]
-                    }
-                },
-                {
-                    "name": "DatabaseClient",
-                    "className": "DatabaseClient",
-                    "lifetime": "singleton",
-                    "dependencies": [],
-                    "handlers": []
-                }
-            ],
-            "middleware": [
-                {
-                    "name": "AuthMiddleware",
-                    "className": "AuthMiddleware",
-                    "global": true,
-                    "order": 1,
-                    "kind": "user"
-                }
-            ],
-            "schemas": {
-                "CreateUserInput": {
-                    "type": "object",
-                    "properties": {
-                        "email": { "type": "string" },
-                        "name": { "type": "string" },
-                        "role": { "type": "string", "enum": ["admin", "member"] }
-                    },
-                    "required": ["email", "name", "role"]
-                },
-                "UserResponse": {
-                    "type": "object",
-                    "properties": {
-                        "id": { "type": "string" },
-                        "email": { "type": "string" },
-                        "name": { "type": "string" },
-                        "role": { "type": "string" },
-                        "createdAt": { "type": "string" }
-                    },
-                    "required": ["id", "email", "name", "role", "createdAt"]
-                }
-            }
+            "hash": "abc123",
+            "emitted_at": "2026-04-27T00:00:00Z",
+            "services": [{
+                "name": "testService",
+                "className": "TestService",
+                "lifetime": "request",
+                "dependencies": [],
+                "handlers": [{
+                    "name": "handle",
+                    "method": method,
+                    "path": path,
+                    "status": 200,
+                    "validate": true,
+                    "extract": extract
+                }]
+            }],
+            "middleware": [],
+            "schemas": {}
         })
         .to_string()
     }
 
+    // ── Basic loading ───────────────────────────
+
     #[test]
-    fn parses_minimal_manifest() {
-        let manifest: Manifest = serde_json::from_str(&minimal_manifest_json()).unwrap();
+    fn loads_minimal_manifest() {
+        let manifest = Manifest::from_json(&minimal_manifest()).unwrap();
         assert_eq!(manifest.version, "1");
         assert!(manifest.services.is_empty());
-        assert!(manifest.middleware.is_empty());
         assert!(manifest.schemas.is_empty());
     }
 
     #[test]
-    fn parses_full_manifest() {
-        let manifest: Manifest = serde_json::from_str(&full_manifest_json()).unwrap();
-        assert_eq!(manifest.services.len(), 2);
-        assert_eq!(manifest.middleware.len(), 1);
-        assert_eq!(manifest.schemas.len(), 2);
-    }
-
-    #[test]
-    fn service_fields_parsed_correctly() {
-        let manifest: Manifest = serde_json::from_str(&full_manifest_json()).unwrap();
-        let user_svc = &manifest.services[0];
-
-        assert_eq!(user_svc.name, "UserService");
-        assert_eq!(user_svc.class_name, "UserService");
-        assert_eq!(user_svc.lifetime, "scoped");
-        assert_eq!(user_svc.dependencies.len(), 1);
-        assert_eq!(user_svc.dependencies[0].dep_type, "class");
-        assert_eq!(user_svc.dependencies[0].value, "DatabaseClient");
-    }
-
-    #[test]
-    fn handler_fields_parsed_correctly() {
-        let manifest: Manifest = serde_json::from_str(&full_manifest_json()).unwrap();
-        let create_handler = &manifest.services[0].handlers[0];
-
-        assert_eq!(create_handler.name, "createUser");
-        assert_eq!(create_handler.method, "POST");
-        assert_eq!(create_handler.path, "/");
-        assert_eq!(create_handler.status, 201);
-        assert!(create_handler.validate);
-        assert_eq!(create_handler.extract.len(), 2);
-    }
-
-    #[test]
-    fn extract_descriptors_parsed_correctly() {
-        let manifest: Manifest = serde_json::from_str(&full_manifest_json()).unwrap();
-        let extracts = &manifest.services[0].handlers[0].extract;
-
-        assert_eq!(extracts[0].source, "body");
-        assert_eq!(extracts[0].position, 0);
-        assert!(extracts[0].schema.is_some());
-        assert_eq!(
-            extracts[0].schema.as_ref().unwrap().ref_path.as_deref(),
-            Some("#/schemas/CreateUserInput")
-        );
-
-        assert_eq!(extracts[1].source, "header");
-        assert_eq!(extracts[1].name.as_deref(), Some("x-tenant-id"));
-        assert_eq!(extracts[1].position, 1);
-        assert!(extracts[1].schema.is_none());
-    }
-
-    #[test]
-    fn group_parsed_correctly() {
-        let manifest: Manifest = serde_json::from_str(&full_manifest_json()).unwrap();
-        let group = manifest.services[0].group.as_ref().unwrap();
-
-        assert_eq!(group.prefix, "/api/v1/users");
-        assert_eq!(group.middleware, vec!["AuthMiddleware"]);
-    }
-
-    #[test]
-    fn service_without_group_has_none() {
-        let manifest: Manifest = serde_json::from_str(&full_manifest_json()).unwrap();
-        let db = &manifest.services[1];
-
-        assert!(db.group.is_none());
-        assert!(db.handlers.is_empty());
-    }
-
-    #[test]
-    fn middleware_parsed_correctly() {
-        let manifest: Manifest = serde_json::from_str(&full_manifest_json()).unwrap();
-        let auth = &manifest.middleware[0];
-
-        assert_eq!(auth.name, "AuthMiddleware");
-        assert!(auth.global);
-        assert_eq!(auth.order, 1);
-        assert_eq!(auth.kind, "user");
-    }
-
-    #[test]
-    fn schemas_parsed_correctly() {
-        let manifest: Manifest = serde_json::from_str(&full_manifest_json()).unwrap();
-        let schema = &manifest.schemas["CreateUserInput"];
-
-        assert!(schema.properties.is_some());
-        let props = schema.properties.as_ref().unwrap();
-        assert!(props.contains_key("email"));
-        assert!(props.contains_key("name"));
-        assert!(props.contains_key("role"));
-
-        assert_eq!(schema.required.as_ref().unwrap().len(), 3);
-    }
-
-    #[test]
-    fn schema_type_single_string() {
-        let manifest: Manifest = serde_json::from_str(&full_manifest_json()).unwrap();
-        let email_schema = &manifest.schemas["CreateUserInput"]
-            .properties
-            .as_ref()
-            .unwrap()["email"];
-
-        match &email_schema.schema_type {
-            Some(SchemaType::Single(s)) => assert_eq!(s, "string"),
-            other => panic!("expected Single(\"string\"), got {:?}", other),
-        }
-    }
-
-    #[test]
-    fn schema_enum_values() {
-        let manifest: Manifest = serde_json::from_str(&full_manifest_json()).unwrap();
-        let role_schema = &manifest.schemas["CreateUserInput"]
-            .properties
-            .as_ref()
-            .unwrap()["role"];
-
-        assert!(role_schema.enum_values.is_some());
-        let values = role_schema.enum_values.as_ref().unwrap();
-        assert_eq!(values.len(), 2);
-    }
-
-    #[test]
-    fn ref_path_parsed() {
-        let manifest: Manifest = serde_json::from_str(&full_manifest_json()).unwrap();
-        let response = manifest.services[0].handlers[0].response.as_ref().unwrap();
-
-        assert_eq!(response.ref_path.as_deref(), Some("#/schemas/UserResponse"));
-    }
-
-    #[test]
-    fn routes_resolves_group_prefix() {
-        let manifest: Manifest = serde_json::from_str(&full_manifest_json()).unwrap();
-        let routes = manifest.routes();
-
-        let post_route = routes.iter().find(|(m, _, _)| *m == "POST").unwrap();
-        assert_eq!(post_route.1, "/api/v1/users/");
-
-        let get_route = routes.iter().find(|(_, p, _)| p.contains(":id")).unwrap();
-        assert_eq!(get_route.1, "/api/v1/users/:id");
-    }
-
-    #[test]
-    fn rejects_unsupported_version() {
+    fn rejects_wrong_version() {
         let json = serde_json::json!({
             "version": "99",
             "hash": "",
@@ -519,77 +486,540 @@ mod tests {
         })
         .to_string();
 
-        let manifest: Manifest = serde_json::from_str(&json).unwrap();
-        let result = manifest.validate();
-        // Version check happens in from_file, not validate
-        // So this test just verifies parsing works even with bad version
-        assert!(result.is_ok());
+        let err = Manifest::from_json(&json).unwrap_err();
+        assert!(
+            matches!(err, ManifestError::UnsupportedVersion { .. }),
+            "expected UnsupportedVersion, got: {err}"
+        );
     }
 
     #[test]
-    fn detects_duplicate_routes() {
+    fn rejects_invalid_json() {
+        let err = Manifest::from_json("{ not valid json }").unwrap_err();
+        assert!(matches!(err, ManifestError::Parse(_)));
+    }
+
+    // ── Service deserialization ──────────────────
+
+    #[test]
+    fn deserializes_full_service() {
+        let json = serde_json::json!({
+            "version": "1",
+            "hash": "def456",
+            "emitted_at": "2026-04-27T00:00:00Z",
+            "services": [{
+                "name": "userService",
+                "className": "UserService",
+                "lifetime": "request",
+                "dependencies": [
+                    { "type": "service", "value": "DatabaseService", "position": 0 }
+                ],
+                "handlers": [
+                    {
+                        "name": "createUser",
+                        "method": "POST",
+                        "path": "/users",
+                        "status": 201,
+                        "validate": true,
+                        "extract": [
+                            {
+                                "source": "body",
+                                "position": 0,
+                                "schema": { "$ref": "#/schemas/CreateUserRequest" }
+                            }
+                        ],
+                        "response": { "$ref": "#/schemas/UserResponse" }
+                    },
+                    {
+                        "name": "getUser",
+                        "method": "GET",
+                        "path": "/users/:id",
+                        "status": 200,
+                        "validate": false,
+                        "extract": [
+                            { "source": "param", "name": "id", "position": 0 }
+                        ]
+                    }
+                ],
+                "group": {
+                    "prefix": "/api",
+                    "middleware": ["AuthMiddleware"]
+                }
+            }],
+            "middleware": [{
+                "name": "auth",
+                "className": "AuthMiddleware",
+                "global": false,
+                "order": 10,
+                "kind": "user"
+            }],
+            "schemas": {
+                "CreateUserRequest": {
+                    "type": "object",
+                    "properties": {
+                        "name": { "type": "string" },
+                        "email": { "type": "string" }
+                    },
+                    "required": ["name", "email"]
+                },
+                "UserResponse": {
+                    "type": "object",
+                    "properties": {
+                        "id": { "type": "string" },
+                        "name": { "type": "string" },
+                        "email": { "type": "string" }
+                    },
+                    "required": ["id", "name", "email"]
+                }
+            }
+        })
+        .to_string();
+
+        let manifest = Manifest::from_json(&json).unwrap();
+
+        // Service
+        assert_eq!(manifest.services.len(), 1);
+        let svc = &manifest.services[0];
+        assert_eq!(svc.name, "userService");
+        assert_eq!(svc.class_name, "UserService");
+        assert_eq!(svc.lifetime, "request");
+        assert_eq!(svc.dependencies.len(), 1);
+        assert_eq!(svc.dependencies[0].dep_type, "service");
+        assert_eq!(svc.dependencies[0].value, "DatabaseService");
+
+        // Handlers
+        assert_eq!(svc.handlers.len(), 2);
+        assert_eq!(svc.handlers[0].name, "createUser");
+        assert_eq!(svc.handlers[0].method, "POST");
+        assert_eq!(svc.handlers[0].status, 201);
+        assert!(svc.handlers[0].validate);
+        assert_eq!(svc.handlers[1].name, "getUser");
+        assert!(!svc.handlers[1].validate);
+
+        // Group
+        let group = svc.group.as_ref().unwrap();
+        assert_eq!(group.prefix, "/api");
+        assert_eq!(group.middleware, vec!["AuthMiddleware"]);
+
+        // Middleware
+        assert_eq!(manifest.middleware.len(), 1);
+        assert_eq!(manifest.middleware[0].order, 10);
+
+        // Schemas
+        assert_eq!(manifest.schemas.len(), 2);
+        assert!(manifest.schemas.contains_key("CreateUserRequest"));
+        assert!(manifest.schemas.contains_key("UserResponse"));
+    }
+
+    #[test]
+    fn default_status_and_validate() {
+        // Omit status and validate — should default to 200 and true
+        let json = serde_json::json!({
+            "version": "1",
+            "hash": "",
+            "emitted_at": "",
+            "services": [{
+                "name": "s",
+                "className": "S",
+                "lifetime": "singleton",
+                "dependencies": [],
+                "handlers": [{
+                    "name": "h",
+                    "method": "GET",
+                    "path": "/health",
+                    "extract": []
+                }]
+            }],
+            "middleware": [],
+            "schemas": {}
+        })
+        .to_string();
+
+        let manifest = Manifest::from_json(&json).unwrap();
+        let handler = &manifest.services[0].handlers[0];
+        assert_eq!(handler.status, 200);
+        assert!(handler.validate);
+    }
+
+    // ── Duplicate route detection ───────────────
+
+    #[test]
+    fn detects_duplicate_routes_same_service() {
+        let json = serde_json::json!({
+            "version": "1",
+            "hash": "",
+            "emitted_at": "",
+            "services": [{
+                "name": "s",
+                "className": "S",
+                "lifetime": "request",
+                "dependencies": [],
+                "handlers": [
+                    { "name": "h1", "method": "GET", "path": "/items", "status": 200, "validate": true, "extract": [] },
+                    { "name": "h2", "method": "GET", "path": "/items", "status": 200, "validate": true, "extract": [] }
+                ]
+            }],
+            "middleware": [],
+            "schemas": {}
+        })
+        .to_string();
+
+        let err = Manifest::from_json(&json).unwrap_err();
+        assert!(matches!(err, ManifestError::DuplicateRoute { .. }));
+    }
+
+    #[test]
+    fn detects_duplicate_routes_across_services() {
         let json = serde_json::json!({
             "version": "1",
             "hash": "",
             "emitted_at": "",
             "services": [
                 {
-                    "name": "A",
+                    "name": "a",
                     "className": "A",
-                    "lifetime": "scoped",
+                    "lifetime": "request",
                     "dependencies": [],
                     "handlers": [
-                        { "name": "h1", "method": "GET", "path": "/users", "status": 200, "validate": true, "extract": [] },
-                        { "name": "h2", "method": "GET", "path": "/users", "status": 200, "validate": true, "extract": [] }
+                        { "name": "h", "method": "POST", "path": "/submit", "status": 200, "validate": true, "extract": [] }
+                    ]
+                },
+                {
+                    "name": "b",
+                    "className": "B",
+                    "lifetime": "request",
+                    "dependencies": [],
+                    "handlers": [
+                        { "name": "h", "method": "POST", "path": "/submit", "status": 201, "validate": true, "extract": [] }
                     ]
                 }
             ],
             "middleware": [],
             "schemas": {}
-        }).to_string();
+        })
+        .to_string();
 
-        let manifest: Manifest = serde_json::from_str(&json).unwrap();
-        let result = manifest.validate();
-        assert!(matches!(result, Err(ManifestError::DuplicateRoute { .. })));
+        let err = Manifest::from_json(&json).unwrap_err();
+        assert!(matches!(err, ManifestError::DuplicateRoute { .. }));
     }
 
     #[test]
-    fn detects_unresolved_ref() {
+    fn allows_same_path_different_methods() {
+        let json = serde_json::json!({
+            "version": "1",
+            "hash": "",
+            "emitted_at": "",
+            "services": [{
+                "name": "s",
+                "className": "S",
+                "lifetime": "request",
+                "dependencies": [],
+                "handlers": [
+                    { "name": "get", "method": "GET", "path": "/items", "status": 200, "validate": true, "extract": [] },
+                    { "name": "post", "method": "POST", "path": "/items", "status": 201, "validate": true, "extract": [] }
+                ]
+            }],
+            "middleware": [],
+            "schemas": {}
+        })
+        .to_string();
+
+        // Should succeed — same path, different methods is valid REST.
+        Manifest::from_json(&json).unwrap();
+    }
+
+    #[test]
+    fn detects_duplicates_with_group_prefix() {
         let json = serde_json::json!({
             "version": "1",
             "hash": "",
             "emitted_at": "",
             "services": [
                 {
-                    "name": "A",
+                    "name": "a",
                     "className": "A",
-                    "lifetime": "scoped",
+                    "lifetime": "request",
                     "dependencies": [],
                     "handlers": [
-                        {
-                            "name": "h1",
-                            "method": "POST",
-                            "path": "/",
-                            "status": 200,
-                            "validate": true,
-                            "extract": [
-                                { "source": "body", "position": 0, "schema": { "$ref": "#/schemas/NonExistent" } }
-                            ]
+                        { "name": "h", "method": "GET", "path": "/api/users", "status": 200, "validate": true, "extract": [] }
+                    ]
+                },
+                {
+                    "name": "b",
+                    "className": "B",
+                    "lifetime": "request",
+                    "dependencies": [],
+                    "handlers": [
+                        { "name": "h", "method": "GET", "path": "/users", "status": 200, "validate": true, "extract": [] }
+                    ],
+                    "group": { "prefix": "/api", "middleware": [] }
+                }
+            ],
+            "middleware": [],
+            "schemas": {}
+        })
+        .to_string();
+
+        let err = Manifest::from_json(&json).unwrap_err();
+        assert!(matches!(err, ManifestError::DuplicateRoute { .. }));
+    }
+
+    // ── Schema $ref resolution ──────────────────
+
+    #[test]
+    fn detects_unresolved_ref_in_extract() {
+        let json = serde_json::json!({
+            "version": "1",
+            "hash": "",
+            "emitted_at": "",
+            "services": [{
+                "name": "s",
+                "className": "S",
+                "lifetime": "request",
+                "dependencies": [],
+                "handlers": [{
+                    "name": "h",
+                    "method": "POST",
+                    "path": "/",
+                    "status": 200,
+                    "validate": true,
+                    "extract": [
+                        { "source": "body", "position": 0, "schema": { "$ref": "#/schemas/DoesNotExist" } }
+                    ]
+                }]
+            }],
+            "middleware": [],
+            "schemas": {}
+        })
+        .to_string();
+
+        let err = Manifest::from_json(&json).unwrap_err();
+        assert!(matches!(err, ManifestError::UnresolvedRef(_)));
+    }
+
+    #[test]
+    fn detects_unresolved_ref_in_response() {
+        let json = serde_json::json!({
+            "version": "1",
+            "hash": "",
+            "emitted_at": "",
+            "services": [{
+                "name": "s",
+                "className": "S",
+                "lifetime": "request",
+                "dependencies": [],
+                "handlers": [{
+                    "name": "h",
+                    "method": "GET",
+                    "path": "/",
+                    "status": 200,
+                    "validate": true,
+                    "extract": [],
+                    "response": { "$ref": "#/schemas/Phantom" }
+                }]
+            }],
+            "middleware": [],
+            "schemas": {}
+        })
+        .to_string();
+
+        let err = Manifest::from_json(&json).unwrap_err();
+        assert!(matches!(err, ManifestError::UnresolvedRef(_)));
+    }
+
+    #[test]
+    fn detects_unresolved_ref_nested_in_properties() {
+        let json = serde_json::json!({
+            "version": "1",
+            "hash": "",
+            "emitted_at": "",
+            "services": [{
+                "name": "s",
+                "className": "S",
+                "lifetime": "request",
+                "dependencies": [],
+                "handlers": [{
+                    "name": "h",
+                    "method": "POST",
+                    "path": "/",
+                    "status": 200,
+                    "validate": true,
+                    "extract": [{
+                        "source": "body",
+                        "position": 0,
+                        "schema": {
+                            "type": "object",
+                            "properties": {
+                                "nested": { "$ref": "#/schemas/Missing" }
+                            }
                         }
-                    ]
-                }
-            ],
+                    }]
+                }]
+            }],
             "middleware": [],
             "schemas": {}
-        }).to_string();
+        })
+        .to_string();
 
-        let manifest: Manifest = serde_json::from_str(&json).unwrap();
-        let result = manifest.validate();
-        assert!(matches!(result, Err(ManifestError::UnresolvedRef(_))));
+        let err = Manifest::from_json(&json).unwrap_err();
+        assert!(matches!(err, ManifestError::UnresolvedRef(_)));
     }
 
     #[test]
-    fn nullable_type_parses() {
+    fn accepts_valid_ref() {
+        let json = serde_json::json!({
+            "version": "1",
+            "hash": "",
+            "emitted_at": "",
+            "services": [{
+                "name": "s",
+                "className": "S",
+                "lifetime": "request",
+                "dependencies": [],
+                "handlers": [{
+                    "name": "h",
+                    "method": "POST",
+                    "path": "/",
+                    "status": 200,
+                    "validate": true,
+                    "extract": [{
+                        "source": "body",
+                        "position": 0,
+                        "schema": { "$ref": "#/schemas/MyType" }
+                    }]
+                }]
+            }],
+            "middleware": [],
+            "schemas": {
+                "MyType": {
+                    "type": "object",
+                    "properties": { "x": { "type": "number" } },
+                    "required": ["x"]
+                }
+            }
+        })
+        .to_string();
+
+        Manifest::from_json(&json).unwrap();
+    }
+
+    // ── Parameter position validation ───────────
+
+    #[test]
+    fn detects_non_contiguous_positions() {
+        let json = single_handler_manifest(
+            "POST",
+            "/test",
+            serde_json::json!([
+                { "source": "body", "position": 0 },
+                { "source": "query", "name": "q", "position": 2 }
+            ]),
+        );
+
+        let err = Manifest::from_json(&json).unwrap_err();
+        assert!(matches!(err, ManifestError::NonContiguousParams { .. }));
+    }
+
+    #[test]
+    fn accepts_contiguous_positions() {
+        let json = single_handler_manifest(
+            "POST",
+            "/test",
+            serde_json::json!([
+                { "source": "body", "position": 0 },
+                { "source": "query", "name": "page", "position": 1 },
+                { "source": "header", "name": "x-request-id", "position": 2 }
+            ]),
+        );
+
+        Manifest::from_json(&json).unwrap();
+    }
+
+    #[test]
+    fn accepts_empty_extract() {
+        let json = single_handler_manifest("GET", "/health", serde_json::json!([]));
+        Manifest::from_json(&json).unwrap();
+    }
+
+    // ── routes() helper ─────────────────────────
+
+    #[test]
+    fn routes_resolves_group_prefix() {
+        let json = serde_json::json!({
+            "version": "1",
+            "hash": "",
+            "emitted_at": "",
+            "services": [{
+                "name": "admin",
+                "className": "AdminService",
+                "lifetime": "singleton",
+                "dependencies": [],
+                "handlers": [
+                    { "name": "list", "method": "GET", "path": "/users", "status": 200, "validate": true, "extract": [] },
+                    { "name": "create", "method": "POST", "path": "/users", "status": 201, "validate": true, "extract": [] }
+                ],
+                "group": { "prefix": "/api/admin", "middleware": [] }
+            }],
+            "middleware": [],
+            "schemas": {}
+        })
+        .to_string();
+
+        let manifest = Manifest::from_json(&json).unwrap();
+        let routes = manifest.routes();
+
+        assert_eq!(routes.len(), 2);
+        assert_eq!(routes[0].path, "/api/admin/users");
+        assert_eq!(routes[0].method, "GET");
+        assert_eq!(routes[1].path, "/api/admin/users");
+        assert_eq!(routes[1].method, "POST");
+    }
+
+    #[test]
+    fn routes_without_group_uses_bare_path() {
+        let json = single_handler_manifest("GET", "/health", serde_json::json!([]));
+        let manifest = Manifest::from_json(&json).unwrap();
+        let routes = manifest.routes();
+
+        assert_eq!(routes.len(), 1);
+        assert_eq!(routes[0].path, "/health");
+    }
+
+    // ── resolve_schema() ────────────────────────
+
+    #[test]
+    fn resolve_schema_works() {
+        let json = serde_json::json!({
+            "version": "1",
+            "hash": "",
+            "emitted_at": "",
+            "services": [],
+            "middleware": [],
+            "schemas": {
+                "Foo": { "type": "object" }
+            }
+        })
+        .to_string();
+
+        let manifest = Manifest::from_json(&json).unwrap();
+
+        assert!(manifest.resolve_schema("#/schemas/Foo").is_some());
+        assert!(manifest.resolve_schema("Foo").is_some());
+        assert!(manifest.resolve_schema("#/schemas/Bar").is_none());
+    }
+
+    // ── File loading error ──────────────────────
+
+    #[test]
+    fn reports_missing_file() {
+        let err = Manifest::from_file(Path::new("/nonexistent/sky-manifest.json")).unwrap_err();
+        assert!(matches!(err, ManifestError::Read { .. }));
+    }
+
+    // ── Nullable type support ───────────────────
+
+    #[test]
+    fn nullable_type_in_schema() {
         let json = serde_json::json!({
             "version": "1",
             "hash": "",
@@ -605,13 +1035,16 @@ mod tests {
         })
         .to_string();
 
-        let manifest: Manifest = serde_json::from_str(&json).unwrap();
+        let manifest = Manifest::from_json(&json).unwrap();
         let schema = &manifest.schemas["NullableField"];
-        match &schema.schema_type {
-            Some(SchemaType::Multiple(types)) => {
-                assert_eq!(types, &vec!["string".to_string(), "null".to_string()]);
-            }
-            other => panic!("expected Multiple, got {:?}", other),
-        }
+
+        // Since schemas is HashMap<String, serde_json::Value>,
+        // the type field is a JSON array.
+        let type_val = schema.get("type").unwrap();
+        assert!(type_val.is_array());
+        let types = type_val.as_array().unwrap();
+        assert_eq!(types.len(), 2);
+        assert_eq!(types[0], "string");
+        assert_eq!(types[1], "null");
     }
 }

@@ -22,6 +22,7 @@ use sky_proto::v1::{
     HealthRequest, HealthStatus, ShutdownRequest, worker_control_client::WorkerControlClient,
 };
 use sky_runtime::WorkerError;
+use std::path::Path;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Instant;
@@ -38,7 +39,7 @@ use tracing::{debug, info, warn};
 /// Construct via [`Supervisor::start`], use via [`Supervisor::hello_client`],
 /// clean up via [`Supervisor::shutdown`] (or drop, as a fallback).
 pub struct Supervisor {
-    channel: Arc<ArcSwap<Channel>>,
+    pub channel: Arc<ArcSwap<Channel>>,
     config: WorkerConfig,
     pool_name: String,
     shutdown_token: CancellationToken,
@@ -151,8 +152,8 @@ fn spawn_worker(config: &WorkerConfig, pool_name: &str) -> Result<Child, WorkerE
     let child = Command::new(&config.bun_path)
         .arg("run")
         .arg(&config.worker_script)
-        .env("SKY_WORKER_SOCKET", &config.socket_path)
         .env("SKY_WORKER_VERSION", &config.worker_version)
+        .env("SKY_WORKER_ID", "1")
         // Pipe stdout/stderr so we can forward them to tracing.
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -254,7 +255,7 @@ async fn wait_for_ready(
         }
 
         // Try to connect and health-check.
-        match try_health_check(&config.socket_path).await {
+        match try_health_check(Path::new("/tmp/sky/workers/sky-worker-1.sock")).await {
             Ok(channel) => return Ok(channel),
             Err(e) => {
                 debug!(

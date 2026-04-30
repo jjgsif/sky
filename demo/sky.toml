@@ -1,0 +1,26 @@
+# Sky Demo Application
+# Run: sky build && SKY_WORKER_ID=1 bun run index.ts
+
+version = "1"
+
+[listen]
+address = "127.0.0.1:8080"
+body_limit = "1mb"
+
+[logging]
+format = "pretty"
+level = "info"
+
+[worker]
+bun_path = "bun"
+worker_script = "./index.ts"
+socket_path = "/tmp/sky/workers/sky-worker.sock"
+worker_version = "0.1.0"
+readiness_timeout = "10s"
+shutdown_grace = "5s"
+manifest_path = "./sky-manifest.json"
+
+[build]
+sources = ["./services"]
+proto_out = "./proto/generated"
+buf_config = "./buf.gen.yaml"

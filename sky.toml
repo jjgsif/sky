@@ -28,3 +28,13 @@ worker_version = "0.1.0"
 readiness_timeout = "10s"
 # Grace period for graceful shutdown.
 shutdown_grace = "5s"
+
+manifest_path = "./sky-manifest.json"
+
+[build]
+# Directories to scan for @Service/@Handler decorated classes
+sources = ["./src/services"]
+# Output directory for generated .proto files
+proto_out = "./proto"
+# Path to buf.gen.yaml (generated if missing)
+buf_config = "./buf.gen.yaml"
