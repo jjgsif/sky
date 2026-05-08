@@ -1,0 +1,24 @@
+# Sky Demo Application
+# Run: sky build && SKY_WORKER_ID=1 bun run index.ts
+
+version = "1"
+
+[listen]
+address = "127.0.0.1:8080"
+body_limit = "1mb"
+
+[logging]
+format = "pretty"
+level = "info"
+
+[worker]
+bun_path = "bun"
+worker_script = "./src/index.ts"
+worker_version = "0.1.0"
+readiness_timeout = "10s"
+shutdown_grace = "5s"
+pool_size = 4
+manifest_path = "./sky-manifest.json"
+
+[build]
+sources = ["./src/runtime/services"]

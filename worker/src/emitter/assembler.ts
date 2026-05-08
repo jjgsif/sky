@@ -7,6 +7,12 @@ export interface ManifestOutput {
     schemas: Record<string, JsonSchema>;
 }
 
+export interface ManifestMiddlewareEntry {
+    kind: "native" | "user";
+    name: string;
+    config?: unknown;
+}
+
 export interface ManifestService {
     name: string;
     className: string;
@@ -14,6 +20,7 @@ export interface ManifestService {
     dependencies: ManifestDependency[];
     handlers: ManifestHandler[];
     group?: ManifestGroup;
+    middleware?: ManifestMiddlewareEntry[];
 }
 
 export interface ManifestDependency {
@@ -29,7 +36,8 @@ export interface ManifestHandler {
     status: number;
     validate: boolean;
     extract: ManifestExtract[];
-    response?: JsonSchema
+    response?: JsonSchema;
+    middleware?: ManifestMiddlewareEntry[];
 }
 
 export interface ManifestExtract {
@@ -45,11 +53,12 @@ export interface ManifestMiddleware {
     global: boolean;
     order: number;
     kind: "user" | "native";
+    config?: unknown;
 }
 
 export interface ManifestGroup {
     prefix: string;
-    middleware: string[];
+    middleware: ManifestMiddlewareEntry[];
 }
 
 import ts from "typescript";
@@ -62,6 +71,7 @@ import type {
     HandlerDefinition,
     ExtractDescriptor,
 } from "../decorators";
+import { getNativeMiddleware } from "./native-middleware";
 import { createHash } from "crypto";
 import fs from "fs";
 import path from "path";
@@ -117,9 +127,16 @@ export async function assembleManifest(
             service.group = {
                 prefix: registration.group.prefix,
                 middleware: registration.group.middleware.map(
-                    (m: Function) => m.name
+                    (m: Function): ManifestMiddlewareEntry => ({ kind: "user", name: m.name })
                 ),
             };
+        }
+
+        // Service-level applied middleware (from @Middleware(Cls) on the service class)
+        if (registration.applyMiddleware?.length) {
+            service.middleware = registration.applyMiddleware.map(
+                (m: Function): ManifestMiddlewareEntry => ({ kind: "user", name: m.name })
+            );
         }
 
         services.push(service);
@@ -134,6 +151,18 @@ export async function assembleManifest(
                 kind: registration.middleware.kind,
             });
         }
+    }
+
+    // Append native (gateway-side) middleware registered via globalMiddleware()
+    for (const nm of getNativeMiddleware()) {
+        middleware.push({
+            name: nm.name,
+            className: nm.name,
+            global: nm.global,
+            order: nm.order,
+            kind: "native",
+            config: nm.config,
+        });
     }
 
     // Assemble final manifest
@@ -188,6 +217,15 @@ function findMethodDeclaration(
         }
     });
     return found;
+}
+
+function toMiddlewareEntry(m: Function | { kind: "native"; name: string; config?: unknown }): ManifestMiddlewareEntry {
+    if (typeof m === "function") {
+        return { kind: "user", name: (m as Function).name };
+    }
+    const entry: ManifestMiddlewareEntry = { kind: "native", name: m.name };
+    if (m.config !== undefined) entry.config = m.config;
+    return entry;
 }
 
 function processHandlers(
@@ -264,7 +302,7 @@ function processHandlers(
             }
         }
 
-        handlers.push({
+        const handlerEntry: ManifestHandler = {
             name: methodName,
             method: handlerDef.method,
             path: handlerDef.path,
@@ -272,7 +310,11 @@ function processHandlers(
             validate: handlerDef.validate ?? true,
             extract: extracts,
             response,
-        });
+        };
+        if (handlerDef.middleware?.length) {
+            handlerEntry.middleware = handlerDef.middleware.map(toMiddlewareEntry);
+        }
+        handlers.push(handlerEntry);
     }
 
     return handlers;

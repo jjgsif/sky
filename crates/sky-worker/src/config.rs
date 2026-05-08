@@ -31,10 +31,6 @@ pub struct WorkerConfig {
     /// `path/to/worker/src/index.ts`.
     pub worker_script: PathBuf,
 
-    /// Path where the worker will listen. Must be writable; the worker
-    /// will delete any existing file at this path on startup.
-    pub socket_path: PathBuf,
-
     /// Version string the worker reports via Health. Typically a
     /// semver or commit hash identifying the worker build.
     pub worker_version: String,
@@ -73,6 +69,11 @@ pub struct WorkerConfig {
 
     #[serde(with = "humantime_serde", default = "default_healthy_reset_duration")]
     pub healthy_reset_duration: Duration,
+
+    /// Number of worker processes to run in parallel.
+    /// Default: 1 (single worker, backward compatible).
+    #[serde(default = "default_pool_size")]
+    pub pool_size: usize,
 }
 
 impl WorkerConfig {
@@ -81,13 +82,11 @@ impl WorkerConfig {
     pub fn new(
         bun_path: impl Into<PathBuf>,
         worker_script: impl Into<PathBuf>,
-        socket_path: impl Into<PathBuf>,
         worker_version: impl Into<String>,
     ) -> Self {
         Self {
             bun_path: bun_path.into(),
             worker_script: worker_script.into(),
-            socket_path: socket_path.into(),
             worker_version: worker_version.into(),
             readiness_timeout: default_readiness_timeout(),
             poll_interval: default_poll_interval(),
@@ -98,6 +97,7 @@ impl WorkerConfig {
             failure_threshold: default_failure_threshold(),
             failure_window: default_failure_window(),
             healthy_reset_duration: default_healthy_reset_duration(),
+            pool_size: default_pool_size(),
         }
     }
 
@@ -134,6 +134,13 @@ impl WorkerConfig {
             return Err(ConfigError::InvalidValue {
                 field: "initial_backoff".to_string(),
                 value: "Initial Backoff must be less than Max Backoff".to_string(),
+            });
+        }
+
+        if self.pool_size == 0 {
+            return Err(ConfigError::InvalidValue {
+                field: "pool_size".to_string(),
+                value: "must be at least 1".to_string(),
             });
         }
 
@@ -182,6 +189,10 @@ fn default_healthy_reset_duration() -> Duration {
     Duration::from_secs(60)
 }
 
+fn default_pool_size() -> usize {
+    1
+}
+
 fn resolve_binary(path: &std::path::Path) -> Option<PathBuf> {
     // If the path is not bare (has a separator), check it literally.
     if path.components().count() > 1 || path.is_absolute() {
@@ -209,26 +220,21 @@ mod tests {
 
     #[test]
     fn new_sets_defaults_for_timings() {
-        let cfg = WorkerConfig::new("bun", "index.ts", "/tmp/s.sock", "1.0.0");
+        let cfg = WorkerConfig::new("bun", "index.ts", "1.0.0");
         assert_eq!(cfg.readiness_timeout, Duration::from_secs(10));
         assert_eq!(cfg.poll_interval, Duration::from_millis(100));
     }
 
     #[test]
     fn validate_rejects_missing_bun_path() {
-        let cfg = WorkerConfig::new(
-            "/nonexistent/bun",
-            "/tmp/fake-script.ts",
-            "/tmp/s.sock",
-            "1.0.0",
-        );
+        let cfg = WorkerConfig::new("/nonexistent/bun", "/tmp/fake-script.ts", "1.0.0");
         let err = cfg.validate().unwrap_err();
         assert!(matches!(err, ConfigError::WorkerBinaryNotFound(_)));
     }
 
     #[test]
     fn validate_rejects_zero_readiness_timeout() {
-        let mut cfg = WorkerConfig::new("bun", "index.ts", "/tmp/s.sock", "1.0.0");
+        let mut cfg = WorkerConfig::new("bun", "index.ts", "1.0.0");
         cfg.readiness_timeout = Duration::from_secs(0);
         // This test can't check further validation without real paths,
         // but we'd need the zero-duration check to fire before path checks.
@@ -241,7 +247,7 @@ mod tests {
     fn config_round_trips_through_json() {
         // Use real paths that exist on this system (/ is a directory, exists on all Unix systems)
         // We're testing serde, not validation.
-        let cfg = WorkerConfig::new("/", "/", "/tmp/test.sock", "1.0.0");
+        let cfg = WorkerConfig::new("/", "/", "1.0.0");
         let json = serde_json::to_string(&cfg).unwrap();
         let parsed: WorkerConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(cfg.bun_path, parsed.bun_path);

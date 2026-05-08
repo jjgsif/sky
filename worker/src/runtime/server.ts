@@ -1,13 +1,12 @@
-import { connectNodeAdapter } from "@connectrpc/connect-node";
-import type { ConnectRouter } from "@connectrpc/connect";
-import http from "node:http2";
+// packages/worker/src/server.ts
+
 import * as fs from "node:fs";
 import type { Logger } from "./logger";
-import {
-    registerWorkerControl,
-    createWorkerState,
-} from "@runtime/services/worker_control";
-import type { HandlerDispatcher } from "./dispatcher";
+import { Container } from "@blue.ts/di";
+import { SkyWorkerSocket } from "@sky/transport";
+import { ServiceRegistry } from "./service-registry";
+import { createDispatcher } from "./dispatcher";
+import type { SkyMiddleware } from "./middleware/types";
 
 // ── Constants ───────────────────────────────────────────
 
@@ -20,7 +19,18 @@ export interface ServerOptions {
     workerVersion: string;
     logger: Logger;
     gracePeriodDefaultMs: number;
-    dispatcher: HandlerDispatcher;
+    /**
+     * All @Service-decorated classes to register.
+     * Passed in from the application entrypoint — the server
+     * does not scan for them itself.
+     */
+    services: (new (...args: any[]) => any)[];
+    /**
+     * User-defined middleware classes to make available to the dispatcher.
+     * Each class is instantiated once (singleton per worker process) and
+     * resolved by class name when the manifest declares middleware on a service or handler.
+     */
+    middleware?: (new (...args: any[]) => SkyMiddleware)[];
 }
 
 export interface RunningServer {
@@ -53,7 +63,6 @@ function resolveSocketPath(logger: Logger): { socketPath: string; workerId: stri
         process.exit(1);
     }
 
-    // Ensure the socket directory exists.
     if (!fs.existsSync(SOCKET_DIR)) {
         fs.mkdirSync(SOCKET_DIR, { recursive: true });
     }
@@ -66,100 +75,111 @@ function resolveSocketPath(logger: Logger): { socketPath: string; workerId: stri
 // ── Server ──────────────────────────────────────────────
 
 /**
- * Start the Sky worker's Connect server listening on a Unix domain socket.
+ * Start the Sky worker server listening on a Unix domain socket.
  *
- * Each worker instance gets a unique socket path derived from its
- * SKY_WORKER_ID. The server registers all Connect services on a
- * single router:
+ * Architecture:
+ *   - Rust gateway creates and owns the socket file
+ *   - This worker connects to it via SkyWorkerSocket
+ *   - The Sky framing protocol carries INVOKE frames inbound
+ *     and RESPONSE_HEAD / RESPONSE_CHUNK / RESPONSE_END frames outbound
+ *   - ServiceRegistry reads from ServiceMap populated by @sky/decorators
+ *     at decoration time — no generated registry file needed
+ *   - The dispatcher resolves services via the DI container per request
  *
- *   - WorkerControl: health checks, shutdown, status reporting
- *   - Per-service handlers: dynamically registered from the dispatcher
+ * Usage from application entrypoint:
  *
- * The dispatcher handles all application-level RPC routing internally,
- * resolving the target service and handler via the DI container.
+ *   import { HelloService } from "./services/HelloService";
+ *
+ *   await startServer({
+ *     workerVersion:        "1.0.0",
+ *     logger,
+ *     gracePeriodDefaultMs: 5000,
+ *     services:             [HelloService, UserService],
+ *   });
  */
 export async function startServer(opts: ServerOptions): Promise<RunningServer> {
-    const { workerVersion, logger, gracePeriodDefaultMs, dispatcher } = opts;
+    const { workerVersion, logger, gracePeriodDefaultMs, services, middleware } = opts;
 
     const { socketPath, workerId } = resolveSocketPath(logger);
 
-    // Clean up any stale socket from a previous unclean shutdown
-    // of this specific worker ID.
-    if (fs.existsSync(socketPath)) {
-        logger.warn({ socketPath, workerId }, "removing stale socket file");
-        fs.unlinkSync(socketPath);
+    // ── DI container and service registry ────────────────
+
+    const container = new Container();
+    const registry = new ServiceRegistry(container);
+
+    // Register all @Service-decorated classes.
+    // ServiceRegistry reads their ServiceRegistration from ServiceMap
+    // which was populated when the decorators ran at import time.
+    registry.registerAll(services);
+
+    // ── Middleware registry ───────────────────────────────
+
+    const middlewareMap = new Map<string, SkyMiddleware>();
+    for (const mCls of (middleware ?? [])) {
+        middlewareMap.set(mCls.name, new mCls());
     }
 
-    const workerState = createWorkerState(workerVersion);
+    // ── Dispatcher ───────────────────────────────────────
 
-    const handler = connectNodeAdapter({
-        routes(router: ConnectRouter) {
-            registerWorkerControl(router, workerState, logger);
-            dispatcher.registerServices(router);
-        },
+    const dispatcher = await createDispatcher(registry, middlewareMap);
+
+    // ── Socket ───────────────────────────────────────────
+
+    // Connect to the gateway-owned socket.
+    // The gateway creates and binds the socket before spawning us.
+    const skySocket = await SkyWorkerSocket.connect(socketPath);
+
+    logger.info({ socketPath, workerId, workerVersion }, "worker connected to gateway socket");
+
+    // Start the dispatcher — drives the invocations() generator loop
+    const stopDispatcher = dispatcher.start(skySocket);
+
+    // ── Shutdown ─────────────────────────────────────────
+
+    let closing = false;
+
+    async function close(): Promise<void> {
+        if (closing) return;
+        closing = true;
+
+        logger.info({ workerId, gracePeriodDefaultMs }, "shutdown initiated");
+
+        // Stop accepting new invocations
+        stopDispatcher();
+
+        // Wait for the grace period to allow in-flight requests to complete
+        await new Promise((resolve) => setTimeout(resolve, gracePeriodDefaultMs));
+
+        logger.info({ workerId }, "grace period elapsed — exiting");
+        process.exit(0);
+    }
+
+    // DRAIN frame — gateway-initiated graceful shutdown
+    skySocket.onDrained(() => {
+        logger.info({ workerId }, "DRAIN received from gateway — finishing in-flight requests");
+        void close();
     });
 
-    const server = http.createServer(
-        handler
-    );
-
-    // Install the shutdown hook that WorkerControl.Shutdown will invoke.
-    workerState.shutdownHook = () => {
-        logger.info(
-            { gracePeriodDefaultMs, workerId },
-            "shutdown hook invoked; closing server"
-        );
-        void closeAndExit(server, socketPath, workerId, logger, gracePeriodDefaultMs);
-    };
-
-    // Bind to the socket and wait for it to be ready.
-    await new Promise<void>((resolve, reject) => {
-        server.once("error", (err) => {
-            logger.error({ err, socketPath, workerId }, "server bind failed");
-            reject(err);
-        });
-        server.listen(socketPath, () => {
-            server.removeListener("error", reject);
-            resolve();
-        });
+    // Unexpected socket close — gateway crashed or connection dropped
+    skySocket.onSocketClosed(() => {
+        logger.error({ workerId }, "gateway socket closed unexpectedly — exiting");
+        process.exit(1);
     });
 
-    logger.info({ socketPath, workerId }, "worker listening");
+    // OS-level signals
+    process.once("SIGTERM", () => {
+        logger.info({ workerId }, "SIGTERM received");
+        void close();
+    });
+
+    process.once("SIGINT", () => {
+        logger.info({ workerId }, "SIGINT received");
+        void close();
+    });
 
     return {
         socketPath,
         workerId,
-        close: async () => {
-            await closeAndExit(server, socketPath, workerId, logger, gracePeriodDefaultMs);
-        },
+        close,
     };
-}
-
-// ── Shutdown ────────────────────────────────────────────
-
-async function closeAndExit(
-    server: http.Http2Server,
-    socketPath: string,
-    workerId: string,
-    logger: Logger,
-    gracePeriodMs: number,
-): Promise<void> {
-    // Wait for the grace period to let in-flight requests complete.
-    await new Promise((resolve) => setTimeout(resolve, gracePeriodMs));
-
-    await new Promise<void>((resolve) => {
-        server.close(() => {
-            if (fs.existsSync(socketPath)) {
-                try {
-                    fs.unlinkSync(socketPath);
-                } catch (err) {
-                    logger.warn({ err, workerId }, "failed to remove socket file on exit");
-                }
-            }
-            logger.info({ workerId }, "server closed; exiting process");
-            resolve();
-        });
-    });
-
-    process.exit(0);
 }

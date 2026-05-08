@@ -70,6 +70,11 @@ pub struct ListenConfig {
     /// shutdown signal before forcibly closing connections. Default: 30s.
     #[serde(with = "humantime_serde", default = "default_drain_timeout")]
     pub drain_timeout: Duration,
+
+    /// Number of parallel accept loops bound with SO_REUSEPORT.
+    /// 0 (default) auto-detects from available_parallelism().
+    #[serde(default = "default_accept_threads")]
+    pub accept_threads: usize,
 }
 
 /// Logging and observability configuration.
@@ -97,6 +102,7 @@ impl Default for ListenConfig {
             address: default_listen_address(),
             body_limit: default_body_limit(),
             drain_timeout: default_drain_timeout(),
+            accept_threads: default_accept_threads(),
         }
     }
 }
@@ -140,6 +146,10 @@ fn default_body_limit() -> u64 {
 
 fn default_drain_timeout() -> Duration {
     Duration::from_secs(30)
+}
+
+fn default_accept_threads() -> usize {
+    0
 }
 
 fn default_log_format() -> LogFormat {

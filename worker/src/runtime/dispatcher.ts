@@ -1,456 +1,262 @@
-/**
- * Handler Dispatcher
- *
- * Receives per-service proto request messages from the Connect server,
- * resolves the target service from the DI container, constructs the
- * argument list from the proto fields, calls the handler method, and
- * serializes the return value into a SkyResponse.
- *
- * Each invocation gets its own DI scope (container.createScope()),
- * so request-scoped services are fresh per request while singletons
- * are shared across all requests.
- *
- * Handlers can return:
- * - A plain object → wrapped with default status, serialized to JSON bytes
- * - A Response instance → status, headers, cookies extracted explicitly
- * - undefined/null → empty body
- */
+import { SkyWorkerSocket, type SkyInvocation } from "@sky/transport";
+import { ServiceRegistry } from "./service-registry.js";
+import type { SkyMiddleware, SkyResponse, SkyBody, MiddlewareContext } from "./middleware/types";
+import { HttpError } from "./errors";
 
-import { Container } from "@blue.ts/di";
-import type { ConnectRouter } from "@connectrpc/connect";
-import type { GenService } from "@bufbuild/protobuf/codegenv2";
-import type { ServiceRegistry } from "./service-registry";
-import type { ExtractDescriptor } from "@decorators";
-import { Response } from "./response";
-import type { SetCookieDescriptor } from "./response";
-import { logger } from "./logger";
-import { SkyResponseSchema } from "@gen/sky_response_pb";
-import { create } from "@bufbuild/protobuf";
+const manifest = await import(`${process.cwd()}/sky-manifest.json`, { with: { type: 'json' } });
 
-// ── Error types ─────────────────────────────────────────
+// ---------------------------------------------------------------------------
+// Manifest handler metadata index
+// ---------------------------------------------------------------------------
 
-/**
- * Framework-provided error for handlers to throw with a
- * specific HTTP status code.
- *
- * @example
- * throw new HttpError(404, "User not found");
- * throw new HttpError(409, "Email already exists");
- */
-export class HttpError extends Error {
-  constructor(
-    public readonly status: number,
-    message: string
-  ) {
-    super(message);
-    this.name = "HttpError";
-  }
-}
-
-// ── Types ───────────────────────────────────────────────
-
-/**
- * The shape of a SkyResponse proto message.
- * Matches sky_response.proto.
- */
-export interface SkyResponse extends Record<string, unknown> {
-  status: number;
-  body: Uint8Array;
-  headers: Record<string, string>;
-  cookies: SkyResponseCookie[];
-}
-
-export interface SkyResponseCookie {
+interface MiddlewareEntry {
+  kind: "native" | "user";
   name: string;
-  value: string;
-  maxAge?: number;
-  path?: string;
-  domain?: string;
-  httpOnly: boolean;
-  secure: boolean;
-  sameSite?: string;
 }
 
-/**
- * Decoded request fields from the per-service proto message.
- * The Connect server decodes the typed proto into this shape
- * before handing off to the dispatcher.
- */
-export interface DecodedRequest {
-  /** Handler identity: "serviceName::handlerName" */
-  handlerId: string;
-
-  /** The raw body bytes (from `bytes body` field), or empty. */
-  body: Uint8Array;
-
-  /** Scalar fields extracted from the proto message, keyed by
-   *  field name (matching the extract descriptor names). */
-  fields: Record<string, string>;
+interface HandlerMeta {
+  status: number;
+  validate: boolean;
+  // Full ordered chain — native entries are hoisted to the gateway; only "user" entries run here.
+  middleware: MiddlewareEntry[];
 }
 
-// ── Dispatcher ──────────────────────────────────────────
+// Index status, validate flag, and middleware chain per handler.
+// Extract descriptors come from ServiceRegistry (source of truth is the decorated source).
+const handlerMeta = new Map<string, HandlerMeta>();
 
-export class HandlerDispatcher {
-  /** Map of service class name → generated Connect service type.
-   *  Populated at startup via registerServiceType(). */
-  private serviceTypes = new Map<string, GenService<any>>();
-
-  constructor(
-    private container: Container,
-    private registry: ServiceRegistry
-  ) { }
-
-  /**
-   * Register a generated Connect service type for a service class.
-   *
-   * Call this at startup for each service, passing the generated
-   * service definition from the compiled proto:
-   *
-   * @example
-   * import { UserService } from "./gen/sky/v1/user_service_connect";
-   * dispatcher.registerServiceType("UserService", UserService);
-   */
-  registerServiceType(className: string, serviceType: GenService<any>): void {
-    this.serviceTypes.set(className, serviceType);
+for (const service of manifest.services) {
+  const serviceMiddleware: MiddlewareEntry[] = (service.middleware ?? []) as MiddlewareEntry[];
+  for (const handler of service.handlers) {
+    handlerMeta.set(`${service.name}.${handler.name}`, {
+      status: handler.status,
+      validate: handler.validate,
+      middleware: [...serviceMiddleware, ...((handler.middleware ?? []) as MiddlewareEntry[])],
+    });
   }
+}
 
+// ---------------------------------------------------------------------------
+// HandlerDispatcher — used by server.ts
+// ---------------------------------------------------------------------------
+
+export interface HandlerDispatcher {
   /**
-   * Register all per-service Connect handlers with a router.
-   *
-   * For each registered service type, creates a Connect service
-   * implementation where every RPC method:
-   *   1. Decodes the proto request into a DecodedRequest
-   *   2. Dispatches to the handler via the DI container
-   *   3. Returns the SkyResponse
-   *
-   * Called from server.ts during startup.
+   * Start the invocation loop against the given socket.
+   * Returns a stop function that signals the dispatcher to stop
+   * accepting new invocations after in-flight requests complete.
    */
-  registerServices(router: ConnectRouter): void {
-    for (const [className, serviceType] of this.serviceTypes) {
-      const serviceInfo = this.registry.getServiceInfoByClassName(className);
-      if (!serviceInfo) {
-        logger.warn({ className }, "service type registered but not found in registry");
-        continue;
-      }
+  start(socket: SkyWorkerSocket): () => void;
+}
 
-      const serviceName = serviceInfo.name;
+export async function createDispatcher(
+  registry: ServiceRegistry,
+  middlewareMap: Map<string, SkyMiddleware> = new Map(),
+): Promise<HandlerDispatcher> {
+  return {
+    start(socket: SkyWorkerSocket): () => void {
+      let stopped = false;
 
-      // Build a handler implementation object where each method
-      // name maps to an async function that dispatches via DI.
-      const implementation: Record<string, (req: any) => Promise<SkyResponse>> = {};
+      void (async () => {
+        for await (const invocation of socket.invocations()) {
+          if (stopped) break;
 
-      const handlers = serviceInfo.registration.handlers;
-      for (const [handlerName, handlerDef] of handlers) {
-        // Connect uses the RPC name from the proto, which is the
-        // handler name with first letter lowercased (Connect convention).
-        // The proto emitter capitalizes it, Connect lowercases it back.
-        const rpcMethodName = handlerName.charAt(0).toLowerCase() + handlerName.slice(1);
-
-        implementation[rpcMethodName] = async (req: any) => {
-          // Decode the typed proto request into a DecodedRequest.
-          const decoded = this.decodeProtoRequest(
-            serviceName,
-            handlerName,
-            req
-          );
-
-          return this.dispatch(decoded);
-        };
-      }
-
-      router.service(serviceType, implementation);
-
-      logger.info(
-        { className, handlers: handlers.size },
-        "registered Connect service"
-      );
-    }
-  }
-
-  /**
-   * Decode a generated proto request message into a DecodedRequest.
-   *
-   * The generated proto message has typed fields:
-   * - `body` (Uint8Array) for Body() extracts
-   * - String fields for Param/Query/Header extracts
-   *
-   * We read the extract descriptors to know which fields to pull
-   * from the proto message and map them into the generic
-   * DecodedRequest shape the dispatcher understands.
-   */
-  private decodeProtoRequest(
-    serviceName: string,
-    handlerName: string,
-    req: any
-  ): DecodedRequest {
-    const extracts = this.registry.getExtracts(serviceName, handlerName);
-    const fields: Record<string, string> = {};
-    let body = new Uint8Array(0);
-
-    for (const extract of extracts) {
-      if (extract.source === "body") {
-        // The proto field is named "body" and typed as bytes.
-        body = req.body ?? new Uint8Array(0);
-      } else if (extract.name) {
-        // Scalar fields — the proto field name is the sanitized
-        // version of the extract name (hyphens → underscores).
-        const protoFieldName = extract.name.replace(/[^a-zA-Z0-9]/g, "_").toLowerCase();
-        const value = req[protoFieldName];
-        if (value !== undefined && value !== "") {
-          fields[extract.name] = String(value);
+          handleInvocation(socket, registry, middlewareMap, invocation).catch((err: Error) => {
+            console.error(`[sky/worker] unhandled error in ${invocation.handlerId}:`, err);
+            socket.sendError(
+              invocation.requestId,
+              "UNHANDLED_EXCEPTION",
+              err.message,
+              err.stack,
+            );
+          });
         }
-      }
-    }
+      })();
 
-    return {
-      handlerId: `${serviceName}::${handlerName}`,
-      body,
-      fields,
-    };
-  }
+      return () => { stopped = true; };
+    },
+  };
+}
 
-  /**
-   * Dispatch a decoded request to the appropriate service method.
-   */
-  async dispatch(request: DecodedRequest): Promise<SkyResponse> {
-    const { serviceName, handlerName } = this.parseHandlerId(
-      request.handlerId
+// ---------------------------------------------------------------------------
+// Per-request handler
+// ---------------------------------------------------------------------------
+
+async function handleInvocation(
+  socket: SkyWorkerSocket,
+  registry: ServiceRegistry,
+  middlewareMap: Map<string, SkyMiddleware>,
+  invocation: SkyInvocation,
+): Promise<void> {
+  const [serviceName, methodName] = invocation.handlerId.split(".");
+
+  const serviceInfo = registry.getServiceInfoByClassName(serviceName);
+  if (!serviceInfo) {
+    socket.sendError(
+      invocation.requestId,
+      "HANDLER_NOT_FOUND",
+      `No service registered for ${serviceName}`,
     );
+    return;
+  }
 
-    const log = logger.child({
-      handler: request.handlerId,
-    });
-
-    log.debug("dispatching handler invocation");
-
-    // ── Look up service and handler ───────────
-    const cls = this.registry.getServiceClass(serviceName);
-    if (!cls) {
-      log.warn({ serviceName }, "service not found in registry");
-      return this.errorResponse(
-        404,
-        "handler_not_found",
-        `Service '${serviceName}' not found`
-      );
-    }
-
-    const handlerDef = this.registry.getHandlerDefinition(
-      serviceName,
-      handlerName
+  const meta = handlerMeta.get(invocation.handlerId);
+  if (!meta) {
+    socket.sendError(
+      invocation.requestId,
+      "MANIFEST_MISMATCH",
+      `No manifest entry for ${invocation.handlerId}`,
     );
-    if (!handlerDef) {
-      log.warn({ handlerName }, "handler method not found on service");
-      return this.errorResponse(
-        404,
-        "handler_not_found",
-        `Handler '${handlerName}' not found on service '${serviceName}'`
-      );
-    }
-
-    // ── Resolve service from DI ───────────────
-    const scope = this.container.createScope();
-
-    let service: any;
-    try {
-      service = await scope.get(cls);
-    } catch (err) {
-      log.error({ err }, "failed to resolve service from DI container");
-      return this.errorResponse(
-        500,
-        "di_resolution_failed",
-        "Failed to resolve service dependencies"
-      );
-    }
-
-    if (typeof service[handlerName] !== "function") {
-      log.error(
-        {
-          handlerName,
-          available: Object.getOwnPropertyNames(
-            Object.getPrototypeOf(service)
-          ),
-        },
-        "handler method not callable on service instance"
-      );
-      return this.errorResponse(
-        500,
-        "handler_not_callable",
-        `Method '${handlerName}' is not a function on '${serviceName}'`
-      );
-    }
-
-    // ── Bind parameters ───────────────────────
-    const extracts = this.registry.getExtracts(serviceName, handlerName);
-    const args = this.bindParameters(request, extracts);
-
-    // ── Call handler ──────────────────────────
-    try {
-      const result = await service[handlerName](...args);
-      return this.buildResponse(result, handlerDef.status);
-    } catch (err) {
-      return this.handleError(err, log);
-    }
+    return;
   }
 
-  /**
-   * Parse "serviceName::handlerName" into its components.
-   */
-  private parseHandlerId(handlerId: string): {
-    serviceName: string;
-    handlerName: string;
-  } {
-    const separatorIndex = handlerId.indexOf("::");
-    if (separatorIndex === -1) {
-      throw new Error(
-        `Invalid handler_id format: '${handlerId}' (expected 'service::handler')`
-      );
+  // Extract descriptors come from the registry — source of truth is the
+  // decorated source file, not the manifest. Position is implied by array index.
+  const extracts = registry.getExtracts(serviceInfo.name, methodName);
+
+  // Fresh scope per request — scoped services get new instances,
+  // singletons resolve from root container automatically
+  const scope = registry.container.createScope();
+  const service = await scope.get(serviceInfo.cls) as Record<string, Function>;
+  const handler = service[methodName].bind(service);
+
+  const args = extracts.map((descriptor) => {
+    switch (descriptor.source) {
+      case "body":
+        return descriptor.stream
+          ? invocation.body                   // AsyncGenerator<Uint8Array>
+          : deserializeBody(invocation.body); // validated, deserialized object
+      case "query":
+        return invocation.query[descriptor.name!];
+      case "param":
+        return invocation.params[descriptor.name!];
+      case "header":
+        return invocation.headers[descriptor.name!.toLowerCase()];
     }
+  });
 
-    return {
-      serviceName: handlerId.substring(0, separatorIndex),
-      handlerName: handlerId.substring(separatorIndex + 2),
-    };
-  }
+  // Build middleware chain — native entries (CORS etc.) are hoisted to the gateway; skip them here.
+  const chain: SkyMiddleware[] = meta.middleware
+    .filter(m => m.kind === "user")
+    .map(m => middlewareMap.get(m.name))
+    .filter((m): m is SkyMiddleware => m !== undefined);
 
-  /**
-   * Construct the argument array for the handler method.
-   *
-   * Position is array index — extracts[0] is arg 0, etc.
-   *
-   * - Body → parsed JSON from request.body
-   * - Param/Query/Header → string from request.fields
-   */
-  private bindParameters(
-    request: DecodedRequest,
-    extracts: ExtractDescriptor[]
-  ): any[] {
-    if (extracts.length === 0) {
-      return [];
-    }
+  const ctx: MiddlewareContext = {
+    invocation,
+    handlerId: invocation.handlerId,
+    method: invocation.method,
+    path: invocation.path,
+    params: invocation.params,
+    query: invocation.query,
+    headers: invocation.headers,
+  };
 
-    // Pre-parse body once if needed.
-    let parsedBody: any = undefined;
-    const needsBody = extracts.some((e) => e.source === "body");
+  const leaf = async (): Promise<SkyResponse> => {
+    const result = await handler(...args);
+    return normalize(result, meta.status);
+  };
 
-    if (needsBody && request.body.length > 0) {
-      try {
-        const bodyStr = new TextDecoder().decode(request.body);
-        parsedBody = JSON.parse(bodyStr);
-      } catch {
-        parsedBody = undefined;
-      }
-    }
-
-    return extracts.map((extract) => {
-      switch (extract.source) {
-        case "body":
-          return parsedBody;
-
-        case "param":
-        case "query":
-        case "header":
-          return extract.name ? request.fields[extract.name] : undefined;
-
-        default:
-          return undefined;
-      }
-    });
-  }
-
-  /**
-   * Build a SkyResponse from a handler's return value.
-   *
-   * - Response instance → extract status, body, headers, cookies
-   * - Plain object → serialize to JSON, use default status
-   * - undefined/null → empty body, use default status
-   */
-  private buildResponse(result: any, defaultStatus: number): SkyResponse {
-    let response;
-    if (result instanceof Response) {
-      const body = result.getBody();
-      const status = result.getStatus() || defaultStatus;
-
-      response = {
-        status,
-        body: this.serializeBody(body),
-        headers: result.getHeaders(),
-        cookies: result.getCookies().map(this.mapCookie),
-      };
-    }
-
-    // Plain object or primitive.
-    response = {
-      status: defaultStatus,
-      body: this.serializeBody(result),
-      headers: {},
-      cookies: [],
-    };
-    return create(SkyResponseSchema, response);
-  }
-
-  /**
-   * Serialize a value to JSON bytes.
-   */
-  private serializeBody(value: any): Uint8Array {
-    if (value === undefined || value === null) {
-      return new Uint8Array(0);
-    }
-
-    const json = JSON.stringify(value);
-    return new TextEncoder().encode(json);
-  }
-
-  /**
-   * Map a SetCookieDescriptor to the proto cookie shape.
-   */
-  private mapCookie(cookie: SetCookieDescriptor): SkyResponseCookie {
-    return {
-      name: cookie.name,
-      value: cookie.value,
-      maxAge: cookie.maxAge,
-      path: cookie.path,
-      domain: cookie.domain,
-      httpOnly: cookie.httpOnly,
-      secure: cookie.secure,
-      sameSite: cookie.sameSite,
-    };
-  }
-
-  /**
-   * Build an error SkyResponse.
-   */
-  private errorResponse(
-    status: number,
-    code: string,
-    message: string
-  ): SkyResponse {
-    const body = JSON.stringify({ code, message });
-
-    return {
-      status,
-      body: new TextEncoder().encode(body),
-      headers: {},
-      cookies: [],
-    };
-  }
-
-  /**
-   * Map handler errors to appropriate responses.
-   */
-  private handleError(err: unknown, log: any): SkyResponse {
+  try {
+    const response = await runMiddlewareChain(chain, ctx, leaf);
+    await sendResponse(socket, invocation.requestId, response);
+  } catch (err) {
     if (err instanceof HttpError) {
-      log.warn(
-        { status: err.status, message: err.message },
-        "handler returned error"
-      );
-      return this.errorResponse(err.status, "handler_error", err.message);
+      await sendHttpErrorResponse(socket, invocation.requestId, err);
+    } else {
+      throw err;
     }
-
-    log.error({ err }, "unhandled error in handler");
-    return this.errorResponse(
-      500,
-      "internal_error",
-      "An unexpected error occurred"
-    );
   }
+}
+
+// ---------------------------------------------------------------------------
+// HttpError response (sends a real HTTP response with the specified status)
+// ---------------------------------------------------------------------------
+
+async function sendHttpErrorResponse(
+  socket: SkyWorkerSocket,
+  requestId: number,
+  err: HttpError,
+): Promise<void> {
+  const body = JSON.stringify({ code: "HTTP_ERROR", message: err.message });
+  const bytes = new TextEncoder().encode(body);
+  socket.sendHead(requestId, err.status, {
+    "content-type": "application/json; charset=utf-8",
+    "content-length": String(bytes.length),
+  });
+  socket.sendChunk(requestId, bytes);
+  socket.sendEnd(requestId);
+}
+
+// ---------------------------------------------------------------------------
+// Middleware chain execution
+// ---------------------------------------------------------------------------
+
+async function runMiddlewareChain(
+  chain: SkyMiddleware[],
+  ctx: MiddlewareContext,
+  leaf: () => Promise<SkyResponse>,
+): Promise<SkyResponse> {
+  if (chain.length === 0) return leaf();
+  return chain[0].handle(ctx, () => runMiddlewareChain(chain.slice(1), ctx, leaf));
+}
+
+// ---------------------------------------------------------------------------
+// Response serialization
+// ---------------------------------------------------------------------------
+
+async function sendResponse(
+  socket: SkyWorkerSocket,
+  requestId: number,
+  response: SkyResponse,
+): Promise<void> {
+  if (isAsyncGenerator(response.body)) {
+    socket.sendHead(requestId, response.status, response.headers);
+    for await (const chunk of response.body) {
+      socket.sendChunk(requestId, chunk);
+    }
+    socket.sendEnd(requestId);
+  } else {
+    const encoder = new TextEncoder();
+    const bytes = encoder.encode(JSON.stringify(response.body));
+    socket.sendHead(requestId, response.status, {
+      "content-type": "application/json; charset=utf-8",
+      "content-length": String(bytes.length),
+      ...response.headers,
+    });
+    socket.sendChunk(requestId, bytes);
+    socket.sendEnd(requestId);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+function normalize(result: unknown, defaultStatus: number): SkyResponse {
+  if (result !== null && typeof result === "object" && "body" in result) {
+    const r = result as { status?: number; headers?: Record<string, string>; body: SkyBody };
+    return {
+      status: r.status ?? defaultStatus,
+      headers: r.headers ?? {},
+      body: r.body,
+    };
+  }
+  return {
+    status: defaultStatus,
+    headers: {},
+    body: result as object,
+  };
+}
+
+function isAsyncGenerator(val: unknown): val is AsyncGenerator<Uint8Array> {
+  return (
+    val !== null &&
+    typeof val === "object" &&
+    typeof (val as AsyncGenerator)[Symbol.asyncIterator] === "function"
+  );
+}
+
+function deserializeBody(body: Uint8Array): unknown {
+  if (body.length === 0) return undefined;
+  return JSON.parse(new TextDecoder().decode(body));
 }

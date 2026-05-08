@@ -1,7 +1,7 @@
 {
   "version": "1",
-  "hash": "sha256:af6025844bd089217426ce9c6e150420181d7f7b76a7e905222030d522ade704",
-  "emitted_at": "2026-04-30T04:06:30.036Z",
+  "hash": "sha256:4181743110969345cabd92a80aa69838d31f704eec22087ed802d278458d4663",
+  "emitted_at": "2026-05-07T17:33:38.460Z",
   "services": [
     {
       "name": "HelloService",
@@ -42,11 +42,154 @@
             "required": [
               "message"
             ]
+          },
+          "middleware": [
+            {
+              "kind": "native",
+              "name": "cors",
+              "config": {
+                "origins": [
+                  "*"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "StreamService",
+      "className": "StreamService",
+      "lifetime": "singleton",
+      "dependencies": [],
+      "handlers": [
+        {
+          "name": "events",
+          "method": "GET",
+          "path": "/stream/events",
+          "status": 200,
+          "validate": true,
+          "extract": [
+            {
+              "source": "query",
+              "position": 0,
+              "name": "count"
+            }
+          ],
+          "response": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "number"
+              },
+              "headers": {
+                "type": "object",
+                "properties": {
+                  "content-type": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "content-type"
+                ]
+              },
+              "body": {
+                "$ref": "#/schemas/AsyncGenerator"
+              }
+            },
+            "required": [
+              "status",
+              "headers",
+              "body"
+            ]
+          }
+        },
+        {
+          "name": "fibonacci",
+          "method": "GET",
+          "path": "/stream/fibonacci",
+          "status": 200,
+          "validate": true,
+          "extract": [
+            {
+              "source": "query",
+              "position": 0,
+              "name": "limit"
+            }
+          ],
+          "response": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "number"
+              },
+              "headers": {
+                "type": "object",
+                "properties": {
+                  "content-type": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "content-type"
+                ]
+              },
+              "body": {
+                "$ref": "#/schemas/AsyncGenerator"
+              }
+            },
+            "required": [
+              "status",
+              "headers",
+              "body"
+            ]
           }
         }
       ]
     }
   ],
   "middleware": [],
-  "schemas": {}
+  "schemas": {
+    "AsyncGenerator": {
+      "type": "object",
+      "properties": {
+        "next": {
+          "$ref": "#/schemas/next"
+        },
+        "return": {
+          "$ref": "#/schemas/return"
+        },
+        "throw": {
+          "$ref": "#/schemas/throw"
+        },
+        "__@asyncIterator@23": {
+          "type": "object",
+          "properties": {}
+        },
+        "__@asyncDispose@37": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      "required": [
+        "next",
+        "return",
+        "throw",
+        "__@asyncIterator@23",
+        "__@asyncDispose@37"
+      ]
+    },
+    "next": {
+      "type": "object",
+      "properties": {}
+    },
+    "return": {
+      "type": "object",
+      "properties": {}
+    },
+    "throw": {
+      "type": "object",
+      "properties": {}
+    }
+  }
 }

@@ -13,8 +13,8 @@
  */
 
 import { Container, type Identifier } from "@blue.ts/di";
-import { ServiceMap } from "@decorators";
-import type { ServiceRegistration, HandlerDefinition, ExtractDescriptor } from "@decorators";
+import { ServiceMap } from "@sky/decorators";
+import type { ServiceRegistration, HandlerDefinition, ExtractDescriptor } from "sky/decorators";
 
 // ── Types ───────────────────────────────────────────────
 
@@ -28,7 +28,7 @@ export interface RegisteredService {
 
 export class ServiceRegistry {
   private services = new Map<string, RegisteredService>();
-  private container: Container;
+  public container: Container;
 
   constructor(container: Container) {
     this.container = container;

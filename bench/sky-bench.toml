@@ -3,17 +3,17 @@ version = "1"
 [listen]
 address = "127.0.0.1:8080"
 body_limit = "1mb"
+accept_threads = 4
 
 [logging]
 # json eliminates pretty-printing overhead on the hot path.
 format = "json"
 # warn suppresses per-request info events (synchronous stdout writes);
 # errors still surface.
-level = "warn"
+level = "info"
 
 [worker]
 bun_path = "bun"
 worker_script = "./worker/src/index.ts"
-# Separate socket so a dev gateway can run concurrently without conflict.
-socket_path = "/tmp/sky-bench-worker.sock"
 worker_version = "0.1.0"
+pool_size = 10

@@ -1,0 +1,195 @@
+{
+  "version": "1",
+  "hash": "sha256:4181743110969345cabd92a80aa69838d31f704eec22087ed802d278458d4663",
+  "emitted_at": "2026-05-07T17:36:54.961Z",
+  "services": [
+    {
+      "name": "HelloService",
+      "className": "HelloService",
+      "lifetime": "singleton",
+      "dependencies": [],
+      "handlers": [
+        {
+          "name": "greet",
+          "method": "POST",
+          "path": "/hello",
+          "status": 201,
+          "validate": true,
+          "extract": [
+            {
+              "source": "body",
+              "position": 0,
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name"
+                ]
+              }
+            }
+          ],
+          "response": {
+            "type": "object",
+            "properties": {
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message"
+            ]
+          },
+          "middleware": [
+            {
+              "kind": "native",
+              "name": "cors",
+              "config": {
+                "origins": [
+                  "*"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "StreamService",
+      "className": "StreamService",
+      "lifetime": "singleton",
+      "dependencies": [],
+      "handlers": [
+        {
+          "name": "events",
+          "method": "GET",
+          "path": "/stream/events",
+          "status": 200,
+          "validate": true,
+          "extract": [
+            {
+              "source": "query",
+              "position": 0,
+              "name": "count"
+            }
+          ],
+          "response": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "number"
+              },
+              "headers": {
+                "type": "object",
+                "properties": {
+                  "content-type": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "content-type"
+                ]
+              },
+              "body": {
+                "$ref": "#/schemas/AsyncGenerator"
+              }
+            },
+            "required": [
+              "status",
+              "headers",
+              "body"
+            ]
+          }
+        },
+        {
+          "name": "fibonacci",
+          "method": "GET",
+          "path": "/stream/fibonacci",
+          "status": 200,
+          "validate": true,
+          "extract": [
+            {
+              "source": "query",
+              "position": 0,
+              "name": "limit"
+            }
+          ],
+          "response": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "number"
+              },
+              "headers": {
+                "type": "object",
+                "properties": {
+                  "content-type": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "content-type"
+                ]
+              },
+              "body": {
+                "$ref": "#/schemas/AsyncGenerator"
+              }
+            },
+            "required": [
+              "status",
+              "headers",
+              "body"
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "middleware": [],
+  "schemas": {
+    "AsyncGenerator": {
+      "type": "object",
+      "properties": {
+        "next": {
+          "$ref": "#/schemas/next"
+        },
+        "return": {
+          "$ref": "#/schemas/return"
+        },
+        "throw": {
+          "$ref": "#/schemas/throw"
+        },
+        "__@asyncIterator@23": {
+          "type": "object",
+          "properties": {}
+        },
+        "__@asyncDispose@37": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      "required": [
+        "next",
+        "return",
+        "throw",
+        "__@asyncIterator@23",
+        "__@asyncDispose@37"
+      ]
+    },
+    "next": {
+      "type": "object",
+      "properties": {}
+    },
+    "return": {
+      "type": "object",
+      "properties": {}
+    },
+    "throw": {
+      "type": "object",
+      "properties": {}
+    }
+  }
+}

@@ -20,8 +20,8 @@ level = "info"
 bun_path = "bun"
 # Path to the worker entry script.
 worker_script = "./worker/src/index.ts"
-# Unix socket where the worker listens and the gateway connects.
-socket_path = "/tmp/sky-worker.sock"
+# Number of worker processes. Increase to scale throughput across CPU cores.
+# pool_size = 1
 # Version string the worker reports via Health.
 worker_version = "0.1.0"
 # How long to wait for the worker to become healthy before giving up.
@@ -33,8 +33,4 @@ manifest_path = "./sky-manifest.json"
 
 [build]
 # Directories to scan for @Service/@Handler decorated classes
-sources = ["./src/services"]
-# Output directory for generated .proto files
-proto_out = "./proto"
-# Path to buf.gen.yaml (generated if missing)
-buf_config = "./buf.gen.yaml"
+sources = ["./worker/src/runtime/services"]

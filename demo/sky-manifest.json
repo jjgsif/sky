@@ -1,7 +1,7 @@
 {
   "version": "1",
-  "hash": "sha256:7c4b53419ebdd08ed0e9d75fc2f56c8d9067e8a71f05ed8c86ea2c1a55b3c6e6",
-  "emitted_at": "2026-04-30T06:31:54.178Z",
+  "hash": "sha256:0db3bef7a9d3319cad367ad738838fbdd75789eca1801639144e4f1531e0a4fe",
+  "emitted_at": "2026-05-07T05:13:47.324Z",
   "services": [
     {
       "name": "HelloService",
@@ -295,7 +295,26 @@
       ]
     }
   ],
-  "middleware": [],
+  "middleware": [
+    {
+      "name": "cors",
+      "className": "cors",
+      "global": true,
+      "order": -1000,
+      "kind": "native",
+      "config": {
+        "origins": [
+          "*"
+        ],
+        "credentials": false,
+        "maxAge": 86400,
+        "allowHeaders": [
+          "content-type",
+          "authorization"
+        ]
+      }
+    }
+  ],
   "schemas": {
     "__type": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",

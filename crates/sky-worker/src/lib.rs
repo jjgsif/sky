@@ -1,36 +1,27 @@
-//! Worker supervisor and Connect client for the Sky framework.
+//! Worker supervisor and Sky framing transport for the Sky framework.
 //!
 //! This crate owns the lifecycle of TypeScript workers: spawning Bun
-//! processes, health-checking them over the Connect boundary, and
-//! dispatching RPCs to them via typed client wrappers.
+//! processes, waiting for them to connect over the Sky framing protocol,
+//! health-checking via PING/PONG, and dispatching requests via INVOKE
+//! frames.
 //!
 //! # Architecture
 //!
-//! The primary type is [`Supervisor`], which owns a single worker
-//! process throughout its lifetime. It is constructed asynchronously
-//! via [`Supervisor::start`], which spawns the worker and waits for
-//! it to become healthy.
+//! The gateway binds a Unix Domain Socket ([`SkyListener`]) before
+//! spawning the worker. The worker connects as a client. The resulting
+//! [`WorkerSocket`] is the multiplexed channel for all in-flight requests.
 //!
-//! Once started, the supervisor exposes typed clients (e.g., [`HelloClient`])
-//! for calling the worker's RPC services. Clients are cheap to clone
-//! and may be used concurrently from multiple tasks.
-//!
-//! # Phase 1 limitations
-//!
-//! - Only one worker per supervisor (no pool).
-//! - No automatic restart on worker crash (arrives in E1-S7).
-//! - Only HelloService exposed via typed client (other services arrive
-//!   with the manifest layer in Phase 2).
+//! The primary type is [`Supervisor`], which owns a single worker process.
+//! Construct via [`Supervisor::start`], dispatch via [`Supervisor::connection`],
+//! clean up via [`Supervisor::shutdown`].
 
-mod client;
 mod config;
+mod pool;
 mod restart_policy;
 mod supervisor;
-mod transport;
+pub mod transport;
 
-pub use client::HelloClient;
 pub use config::WorkerConfig;
-pub use supervisor::Supervisor;
-
-#[doc(hidden)]
-pub use transport::connect_uds as connect_uds_for_probe;
+pub use pool::WorkerPool;
+pub use supervisor::{socket_path_for_id, Supervisor};
+pub use transport::{InboundFrame, InvokePayload, PendingRequest, SkyListener, WorkerSocket};

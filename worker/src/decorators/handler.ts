@@ -6,16 +6,15 @@ const Handler = (options: HandlerOptions) => {
             context.metadata.handlers = new Map<string, HandlerDefinition>();
         }
 
-        (context.metadata.handlers as Map<string, HandlerDefinition>).set(
-            context.name.toString(),
-            {
-                status: options.status ?? getDefaultStatus(options.method),
-                extract: options.extract ?? [],
-                method: options.method,
-                path: options.path,
-                validate: options.validate ?? true
-            }
-        );
+        const def: HandlerDefinition = {
+            status: options.status ?? getDefaultStatus(options.method),
+            extract: options.extract ?? [],
+            method: options.method,
+            path: options.path,
+            validate: options.validate ?? true,
+        };
+        if (options.middleware?.length) def.middleware = options.middleware;
+        (context.metadata.handlers as Map<string, HandlerDefinition>).set(context.name.toString(), def);
     };
 };
 

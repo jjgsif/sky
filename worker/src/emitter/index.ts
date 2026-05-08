@@ -1,7 +1,5 @@
-// src/index.ts
 export { assembleManifest } from "./assembler";
-export {ProtoEmitter, type Manifest} from "./proto-emitter";
-export type { 
+export type {
     ManifestOutput,
     ManifestService,
     ManifestHandler,
@@ -10,6 +8,7 @@ export type {
     ManifestMiddleware,
     ManifestGroup,
 } from "./assembler";
+export { globalMiddleware } from "./native-middleware";
 export * from "./registry";
 export * from "./schema";
 export * from "./walker";

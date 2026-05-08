@@ -106,6 +106,10 @@ pub struct ServiceDescriptor {
     /// Optional route group (from `@Group`).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub group: Option<GroupDescriptor>,
+
+    /// Middleware applied to all handlers in this service.
+    #[serde(default)]
+    pub middleware: Vec<HandlerMiddleware>,
 }
 
 /// A constructor dependency for DI.
@@ -148,6 +152,10 @@ pub struct HandlerDescriptor {
     /// Optional response schema for documentation / future validation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response: Option<serde_json::Value>,
+
+    /// Middleware applied to this handler specifically.
+    #[serde(default)]
+    pub middleware: Vec<HandlerMiddleware>,
 }
 
 fn default_status() -> u16 {
@@ -182,6 +190,20 @@ pub struct ExtractDescriptor {
 // Middleware & groups
 // ──────────────────────────────────────────────
 
+/// A single entry in a handler's or service's `middleware` array.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HandlerMiddleware {
+    /// "native" for gateway-executed (e.g. cors), "user" for worker-executed.
+    pub kind: String,
+
+    /// Middleware name / class name.
+    pub name: String,
+
+    /// Configuration blob for native middleware.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub config: Option<serde_json::Value>,
+}
+
 /// A `@Middleware`-decorated class.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MiddlewareDescriptor {
@@ -203,6 +225,10 @@ pub struct MiddlewareDescriptor {
     /// "user" for app-defined, "native" for framework-provided.
     #[serde(default = "default_kind")]
     pub kind: String,
+
+    /// Native middleware configuration (e.g., CorsConfig for kind = "native").
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub config: Option<serde_json::Value>,
 }
 
 fn default_kind() -> String {
@@ -215,9 +241,9 @@ pub struct GroupDescriptor {
     /// URL prefix applied to all handlers in the group.
     pub prefix: String,
 
-    /// Names of middleware applied to this group.
+    /// Middleware applied to this group.
     #[serde(default)]
-    pub middleware: Vec<String>,
+    pub middleware: Vec<HandlerMiddleware>,
 }
 
 // ──────────────────────────────────────────────
@@ -543,7 +569,7 @@ mod tests {
                 ],
                 "group": {
                     "prefix": "/api",
-                    "middleware": ["AuthMiddleware"]
+                    "middleware": [{ "kind": "user", "name": "AuthMiddleware" }]
                 }
             }],
             "middleware": [{
@@ -599,7 +625,9 @@ mod tests {
         // Group
         let group = svc.group.as_ref().unwrap();
         assert_eq!(group.prefix, "/api");
-        assert_eq!(group.middleware, vec!["AuthMiddleware"]);
+        assert_eq!(group.middleware.len(), 1);
+        assert_eq!(group.middleware[0].kind, "user");
+        assert_eq!(group.middleware[0].name, "AuthMiddleware");
 
         // Middleware
         assert_eq!(manifest.middleware.len(), 1);

@@ -1,6 +1,6 @@
 [package]
 name = "sky-worker"
-description = "Worker supervisor and client for the Sky framework"
+description = "Worker supervisor and Sky framing transport for the Sky framework"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -12,18 +12,17 @@ publish = false
 
 [dependencies]
 sky-runtime = { workspace = true }
-sky-proto = { workspace = true }
 
 tokio = { workspace = true }
 tracing = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 
-tonic = { workspace = true }
-prost = { workspace = true }
-tower = { workspace = true }
-hyper = { workspace = true }
-hyper-util = { workspace = true }
+bytes = { workspace = true }
+dashmap = { workspace = true }
+rmp-serde = { workspace = true }
+serde_bytes = { workspace = true }
 futures = { workspace = true }
 humantime-serde = { workspace = true }
 arc-swap = { workspace = true }
@@ -31,5 +30,4 @@ tokio-util = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
-serde_json = { workspace = true }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

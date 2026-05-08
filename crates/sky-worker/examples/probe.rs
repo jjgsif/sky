@@ -1,25 +1,30 @@
-use sky_proto::v1::{HealthRequest, worker_control_client::WorkerControlClient};
+//! Diagnostic probe: connect to a running worker socket and send a PING.
+
+use sky_worker::transport::SkyListener;
 use std::path::PathBuf;
+use std::time::Duration;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
-        .with_env_filter("sky_worker=trace,tonic=trace,h2=trace,hyper=debug")
+        .with_env_filter("sky_worker=debug")
         .init();
 
-    let socket = PathBuf::from("/tmp/manual-test.sock");
-    println!("connecting to {:?}", socket);
+    let socket_path = PathBuf::from(
+        std::env::args()
+            .nth(1)
+            .unwrap_or_else(|| "/tmp/sky/workers/sky-worker-1.sock".to_string()),
+    );
 
-    // let channel = sky_worker::connect_uds_for_probe(socket).await?;
-    let channel = tonic::transport::Endpoint::from_static("http://127.0.0.1:50051")
-        .connect()
-        .await?;
-    println!("channel established");
+    println!("binding probe socket at {:?}", socket_path);
+    let listener = SkyListener::bind(&socket_path)?;
 
-    let mut client = WorkerControlClient::new(channel);
-    println!("sending Health RPC");
-    let response = client.health(HealthRequest {}).await?;
-    println!("response: {:?}", response.into_inner());
+    println!("waiting for worker to connect…");
+    let socket = tokio::time::timeout(Duration::from_secs(10), listener.accept()).await??;
+    println!("worker connected — sending PING");
+
+    socket.ping("probe", Duration::from_secs(5)).await?;
+    println!("PONG received — worker is healthy");
 
     Ok(())
 }

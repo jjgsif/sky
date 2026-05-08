@@ -2,57 +2,65 @@
  * Demo Application — Integration Test
  *
  * Exercises every endpoint in the demo application via the
- * worker's Unix domain socket.
+ * Sky gateway HTTP API.
  *
  * Prerequisites:
- *   1. sky build
- *   2. SKY_WORKER_ID=1 bun run index.ts
- *   3. bun run test.ts
+ *   1. Start the worker:   SKY_WORKER_ID=1 bun run index.ts
+ *   2. Start the gateway:  cargo run -p sky-gateway -- --config ./sky.toml
+ *   3. Run tests:          bun run test.ts
  */
 
-const SOCKET_PATH = "/tmp/sky/workers/sky-worker-1.sock";
+const BASE = "http://127.0.0.1:8080";
 
-// ── Helpers ─────────────────────────────────────────
+// ── Helpers ─────────────────────────────────────────────
 
 let passed = 0;
 let failed = 0;
 
-async function call(
+async function get(
+  path: string,
+  headers: Record<string, string> = {},
+): Promise<{ status: number; body: any }> {
+  const res: Response = await fetch(`${BASE}${path}`, { headers });
+  return { status: res.status, body: await json(res) };
+}
+
+async function post(
   path: string,
   payload: Record<string, any> = {},
 ): Promise<{ status: number; body: any }> {
-  const response = await fetch(`http://localhost${path}`, {
+  const res: globalThis.Response = await fetch(`${BASE}${path}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload),
-    // @ts-ignore
-    unix: SOCKET_PATH,
   });
+  return { status: res.status, body: await json(res) };
+}
 
+async function put(
+  path: string,
+  payload: Record<string, any> = {},
+): Promise<{ status: number; body: any }> {
+  const res: globalThis.Response = await fetch(`${BASE}${path}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  return { status: res.status, body: await json(res) };
+}
+
+async function del(path: string): Promise<{ status: number; body: any }> {
+  const res: Response = await fetch(`${BASE}${path}`, { method: "DELETE" });
+  return { status: res.status, body: await json(res) };
+}
+
+async function json(response: Response): Promise<any> {
   const text = await response.text();
-  let body: any;
   try {
-    body = JSON.parse(text);
+    return JSON.parse(text);
   } catch {
-    body = text;
+    return text;
   }
-
-  return { status: response.status, body };
-}
-
-function encodeBody(obj: any): string {
-  return btoa(JSON.stringify(obj));
-}
-
-function decodeBody(response: any): any {
-  if (response.body && typeof response.body === "string") {
-    try {
-      return JSON.parse(atob(response.body));
-    } catch {
-      return response.body;
-    }
-  }
-  return response;
 }
 
 async function test(name: string, fn: () => Promise<void>): Promise<void> {
@@ -78,216 +86,157 @@ function eq(actual: any, expected: any, label: string): void {
   );
 }
 
-// ── Tests ───────────────────────────────────────────
+// ── Tests ────────────────────────────────────────────────
 
 async function run() {
-  console.log("\n🚀 Sky Demo — Integration Tests\n");
+  console.log("\nSky Demo — Integration Tests\n");
 
-  // ── Health ──────────────────────────────────
+  // ── Health ──────────────────────────────────────────────
 
   console.log("HealthService:");
 
   await test("GET /health returns healthy status", async () => {
-    const { status, body } = await call("/sky.v1.HealthService/Check", {});
+    const { status, body } = await get("/health");
     eq(status, 200, "HTTP status");
-
-    const decoded = decodeBody(body);
-    eq(decoded.status, "healthy", "health status");
-    assert(decoded.startedAt !== undefined, "should have startedAt");
-    assert(decoded.uptime !== undefined, "should have uptime");
-    console.log(`    uptime: ${decoded.uptime}`);
+    eq(body.status, "healthy", "health status");
+    assert(body.startedAt !== undefined, "should have startedAt");
+    assert(body.uptime !== undefined, "should have uptime");
+    console.log(`    uptime: ${body.uptime}`);
   });
 
-  // ── Users CRUD ─────────────────────────────
+  // ── Users CRUD ──────────────────────────────────────────
 
   console.log("\nUserService:");
 
   let userId: string;
 
   await test("POST /users creates a user with Zod validation", async () => {
-    const { status, body } = await call("/sky.v1.UserService/CreateUser", {
-      body: encodeBody({
-        name: "Alice",
-        email: "alice@example.com",
-        role: "admin",
-      }),
+    const { status, body } = await post("/users", {
+      name: "Alice",
+      email: "alice@example.com",
+      role: "admin",
     });
-
-    eq(status, 200, "HTTP status");
-    const decoded = decodeBody(body);
-    assert(decoded.id !== undefined, "should have id");
-    eq(decoded.name, "Alice", "name");
-    eq(decoded.email, "alice@example.com", "email");
-    eq(decoded.role, "admin", "role");
-    userId = decoded.id;
+    eq(status, 201, "HTTP status");
+    assert(body.id !== undefined, "should have id");
+    eq(body.name, "Alice", "name");
+    eq(body.email, "alice@example.com", "email");
+    eq(body.role, "admin", "role");
+    userId = body.id;
     console.log(`    created user ${userId}`);
   });
 
   await test("POST /users rejects invalid email", async () => {
-    const { status, body } = await call("/sky.v1.UserService/CreateUser", {
-      body: encodeBody({
-        name: "Bob",
-        email: "not-an-email",
-      }),
+    const { status, body } = await post("/users", {
+      name: "Bob",
+      email: "not-an-email",
     });
-
-    // Should fail Zod validation
-    const decoded = decodeBody(body);
-    console.log(`    response: ${JSON.stringify(decoded)}`);
+    assert(status >= 400, `expected error status, got ${status}`);
+    console.log(`    response: ${JSON.stringify(body)}`);
   });
 
   await test("POST /users rejects missing name", async () => {
-    const { status, body } = await call("/sky.v1.UserService/CreateUser", {
-      body: encodeBody({
-        email: "bob@example.com",
-      }),
+    const { status, body } = await post("/users", {
+      email: "bob@example.com",
     });
-
-    const decoded = decodeBody(body);
-    console.log(`    response: ${JSON.stringify(decoded)}`);
+    assert(status >= 400, `expected error status, got ${status}`);
+    console.log(`    response: ${JSON.stringify(body)}`);
   });
 
   await test("GET /users/:id returns the created user", async () => {
-    const { status, body } = await call("/sky.v1.UserService/GetUser", {
-      id: userId,
-    });
-
+    const { status, body } = await get(`/users/${userId}`);
     eq(status, 200, "HTTP status");
-    const decoded = decodeBody(body);
-    eq(decoded.id, userId, "id");
-    eq(decoded.name, "Alice", "name");
+    eq(body.id, userId, "id");
+    eq(body.name, "Alice", "name");
   });
 
   await test("GET /users/:id returns 404 for missing user", async () => {
-    const { status, body } = await call("/sky.v1.UserService/GetUser", {
-      id: "999",
-    });
-
-    const decoded = decodeBody(body);
-    eq(decoded.code, "handler_error", "error code");
-    console.log(`    message: ${decoded.message}`);
+    const { status } = await get("/users/999");
+    eq(status, 404, "HTTP status");
   });
 
   await test("POST /users creates a second user", async () => {
-    const { status, body } = await call("/sky.v1.UserService/CreateUser", {
-      body: encodeBody({
-        name: "Bob",
-        email: "bob@example.com",
-      }),
+    const { status, body } = await post("/users", {
+      name: "Bob",
+      email: "bob@example.com",
     });
-
-    eq(status, 200, "HTTP status");
-    const decoded = decodeBody(body);
-    eq(decoded.name, "Bob", "name");
-    eq(decoded.role, "member", "default role");
-    console.log(`    created user ${decoded.id} with default role`);
+    eq(status, 201, "HTTP status");
+    eq(body.name, "Bob", "name");
+    eq(body.role, "member", "default role");
+    console.log(`    created user ${body.id} with default role`);
   });
 
   await test("GET /users lists users with pagination", async () => {
-    const { status, body } = await call("/sky.v1.UserService/ListUsers", {
-      page: "1",
-      limit: "10",
-    });
-
+    const { status, body } = await get("/users?page=1&limit=10");
     eq(status, 200, "HTTP status");
-    const decoded = decodeBody(body);
-    assert(decoded.items.length >= 2, "should have at least 2 users");
-    eq(decoded.page, 1, "page");
-    console.log(`    total: ${decoded.total}, showing: ${decoded.items.length}`);
+    assert(body.items.length >= 2, "should have at least 2 users");
+    eq(body.page, 1, "page");
+    console.log(`    total: ${body.total}, showing: ${body.items.length}`);
   });
 
   await test("PUT /users/:id updates a user", async () => {
-    const { status, body } = await call("/sky.v1.UserService/UpdateUser", {
-      id: userId,
-      body: encodeBody({ name: "Alice Updated" }),
+    const { status, body } = await put(`/users/${userId}`, {
+      name: "Alice Updated",
     });
-
     eq(status, 200, "HTTP status");
-    const decoded = decodeBody(body);
-    eq(decoded.name, "Alice Updated", "updated name");
-    eq(decoded.email, "alice@example.com", "email unchanged");
+    eq(body.name, "Alice Updated", "updated name");
+    eq(body.email, "alice@example.com", "email unchanged");
   });
 
   await test("DELETE /users/:id removes a user", async () => {
-    const { status, body } = await call("/sky.v1.UserService/DeleteUser", {
-      id: userId,
-    });
-
-    eq(status, 200, "HTTP status");
+    const { status } = await del(`/users/${userId}`);
+    eq(status, 204, "HTTP status");
   });
 
   await test("GET /users/:id returns 404 after deletion", async () => {
-    const { status, body } = await call("/sky.v1.UserService/GetUser", {
-      id: userId,
-    });
-
-    const decoded = decodeBody(body);
-    eq(decoded.code, "handler_error", "error code");
+    const { status } = await get(`/users/${userId}`);
+    eq(status, 404, "HTTP status");
   });
 
-  // ── Admin ──────────────────────────────────
+  // ── Admin ───────────────────────────────────────────────
 
   console.log("\nAdminService:");
 
   await test("GET /api/admin/users with valid token", async () => {
-    const { status, body } = await call(
-      "/sky.v1.AdminService/ListAdminUsers",
-      {
-        x_admin_token: "sky-admin-secret",
-        page: "1",
-      },
-    );
-
+    const { status, body } = await get("/api/admin/users?page=1", {
+      "x-admin-token": "sky-admin-secret",
+    });
     eq(status, 200, "HTTP status");
-    const decoded = decodeBody(body);
-    eq(decoded.admin, true, "admin flag");
-    console.log(`    response: ${JSON.stringify(decoded)}`);
+    eq(body.admin, true, "admin flag");
+    console.log(`    response: ${JSON.stringify(body)}`);
   });
 
   await test("GET /api/admin/users with invalid token returns 401", async () => {
-    const { status, body } = await call(
-      "/sky.v1.AdminService/ListAdminUsers",
-      {
-        x_admin_token: "wrong-token",
-        page: "1",
-      },
-    );
-
-    const decoded = decodeBody(body);
-    eq(decoded.code, "handler_error", "error code");
-    console.log(`    message: ${decoded.message}`);
+    const { status } = await get("/api/admin/users?page=1", {
+      "x-admin-token": "wrong-token",
+    });
+    eq(status, 401, "HTTP status");
   });
 
   await test("GET /api/admin/stats with valid token", async () => {
-    const { status, body } = await call(
-      "/sky.v1.AdminService/GetStats",
-      {
-        x_admin_token: "sky-admin-secret",
-      },
-    );
-
+    const { status, body } = await get("/api/admin/stats", {
+      "x-admin-token": "sky-admin-secret",
+    });
     eq(status, 200, "HTTP status");
-    const decoded = decodeBody(body);
-    assert(decoded.totalUsers !== undefined, "should have totalUsers");
-    console.log(`    stats: ${JSON.stringify(decoded)}`);
+    assert(body.totalUsers !== undefined, "should have totalUsers");
+    console.log(`    stats: ${JSON.stringify(body)}`);
   });
 
-  // ── Summary ────────────────────────────────
+  // ── Summary ─────────────────────────────────────────────
 
   console.log("\n─────────────────────────────────────────");
 
   if (failed > 0) {
-    console.log(`\n❌ ${passed} passed, ${failed} failed\n`);
+    console.log(`\n${passed} passed, ${failed} failed\n`);
     process.exit(1);
   }
 
-  console.log(`\n✅ All ${passed} tests passed\n`);
+  console.log(`\nAll ${passed} tests passed\n`);
 }
 
 run().catch((err) => {
-  console.error("\n💥 Fatal:", err.message);
-  console.error("\nIs the worker running?");
-  console.error("  sky build");
-  console.error("  SKY_WORKER_ID=1 bun run index.ts\n");
+  console.error("\nFatal:", err.message);
+  console.error("\nIs the gateway running?");
+  console.error("  1. SKY_WORKER_ID=1 bun run index.ts");
+  console.error("  2. cargo run -p sky-gateway -- --config ./sky.toml\n");
   process.exit(1);
 });

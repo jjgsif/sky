@@ -11,7 +11,6 @@ license.workspace = true
 publish = false
 
 [dependencies]
-sky-proto = { workspace = true }
 sky-runtime = { workspace = true }
 sky-worker = { workspace = true }
 
@@ -20,18 +19,20 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 
 axum = { workspace = true }
-tonic = { workspace = true }
 tower = { workspace = true }
 tower-http = { workspace = true }
 
+bytes = { workspace = true }
 humantime-serde = { workspace = true }
+rmp-serde = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 toml = { workspace = true }
 
 anyhow = { workspace = true }
 clap = { workspace = true }
+futures = { workspace = true }
 jsonschema = { workspace = true }
-prost = { workspace = true }
+socket2 = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }

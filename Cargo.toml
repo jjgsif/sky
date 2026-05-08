@@ -3,26 +3,25 @@ name = "sky"
 version = "0.1.0"
 edition = "2021"
 
-
 [workspace]
 resolver = "2"
 members = [
-    "crates/sky-runtime",
-    "crates/sky-proto",
-    "crates/sky-worker",
-    "crates/sky-gateway",
-    "crates/sky-router",
-    "crates/sky-middleware",
+  "crates/sky-gateway",
+  "crates/sky-middleware",
+  "crates/sky-proto",
+  "crates/sky-router",
+  "crates/sky-runtime",
+  "crates/sky-worker",
 ]
 
 [workspace.package]
 version = "0.1.0"
+authors = ["Sky Framework Contributors"]
 edition = "2024"
 rust-version = "1.95"
-authors = ["Sky Framework Contributors"]
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/REPLACE/sky"
 readme = "README.md"
+repository = "https://github.com/REPLACE/sky"
+license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
 # Async runtime
@@ -40,7 +39,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 # Identifiers
-uuid = { version = "1", features = ["v7", "serde"] }
+uuid = { version = "1", features = ["serde", "v7"] }
 
 # Async extensions (for timeouts, streams, etc.)
 futures = "0.3"
@@ -48,19 +47,19 @@ futures = "0.3"
 # Human-readable duration parsing for configs
 humantime-serde = "1"
 
+prost = "0.13"
 # tonic and prost - already used by sky-proto, now needed by sky-worker too
 tonic = "0.12"
-prost = "0.13"
 
 # tower for the transport layer
 tower = "0.5"
 
+# HTTP server and extractors
+axum = "0.7"
 # Unix socket connection handling
 hyper = "1"
 hyper-util = { version = "0.1", features = ["tokio"] }
-# HTTP server and extractors
-axum = "0.7"
-tower-http = { version = "0.6", features = ["limit", "trace"] }
+tower-http = { version = "0.6", features = ["limit", "trace", "cors"] }
 
 # CLI
 clap = { version = "4", features = ["derive"] }
@@ -74,14 +73,19 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 # Top-level error convenience for the binary
 anyhow = "1"
 arc-swap = "1.9.1"
+bytes = "1"
+dashmap = { version = "6.1.0" }
 jsonschema = "0.46.2"
+rmp-serde = "1"
+serde_bytes = "0.11"
+socket2 = { version = "0.5", features = ["all"] }
 
+sky-middleware = { path = "crates/sky-middleware" }
+sky-proto = { path = "crates/sky-proto" }
+sky-router = { path = "crates/sky-router" }
 # Internal crates - declared here so member crates can reference by `workspace = true`
 sky-runtime = { path = "crates/sky-runtime" }
-sky-proto = { path = "crates/sky-proto" }
 sky-worker = { path = "crates/sky-worker" }
-sky-router = { path = "crates/sky-router" }
-sky-middleware = { path = "crates/sky-middleware" }
 
 [profile.release]
 lto = "thin"

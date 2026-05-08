@@ -1,32 +1,24 @@
 //! Integration tests for the worker supervisor.
 //!
-//! These tests spawn real Bun workers and exercise the full boundary.
-//! They require:
+//! These tests spawn real Bun workers and exercise the full boundary:
+//! socket binding (via ID convention), worker startup, PING/PONG health
+//! check, and shutdown.
+//!
+//! Requirements:
 //!   - Bun installed and on PATH
-//!   - The worker code built and available at the expected path
+//!   - Worker code available at the expected path
 //!
 //! Run with: `cargo test -p sky-worker --test supervisor_integration`
-//!
-//! These tests are slower than unit tests because they spawn processes.
 
-use sky_proto::v1::GreetRequest;
-use sky_runtime::{RequestId, WorkerError};
+use sky_runtime::WorkerError;
 use sky_worker::{Supervisor, WorkerConfig};
 use std::path::PathBuf;
 use std::time::Duration;
 
-/// Path to the worker script, relative to this test file.
-///
-/// The workspace layout is:
-///   sky/
-///     crates/sky-worker/tests/supervisor_integration.rs  (this file)
-///     worker/src/index.ts                                (the target)
 fn worker_script_path() -> PathBuf {
-    // CARGO_MANIFEST_DIR is the directory of the current crate's Cargo.toml
-    // (i.e., sky/crates/sky-worker). We go up two levels to reach `sky/`.
     let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     manifest_dir
-        .parent() // sky/crates
+        .parent()
         .and_then(|p| p.parent())
         .expect("workspace layout")
         .join("worker")
@@ -34,50 +26,34 @@ fn worker_script_path() -> PathBuf {
         .join("index.ts")
 }
 
-/// Generate a unique socket path per test so parallel tests don't collide.
-fn unique_socket_path(test_name: &str) -> PathBuf {
+/// Generate a unique worker ID per test so parallel tests use separate sockets.
+///
+/// ID strings like `"test-{name}-{pid}-{nanos}"` produce paths under
+/// `/tmp/sky/workers/` that won't collide between concurrent test runs.
+fn unique_worker_id(test_name: &str) -> String {
     let pid = std::process::id();
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    PathBuf::from(format!(
-        "/tmp/sky-test-{}-{}-{}.sock",
-        test_name, pid, nanos
-    ))
+    format!("test-{test_name}-{pid}-{nanos}")
 }
 
-fn test_config(test_name: &str) -> WorkerConfig {
-    let socket_path = unique_socket_path(test_name);
-    // Use `bun` from PATH. Tests depend on Bun being installed.
-    WorkerConfig::new("bun", worker_script_path(), socket_path, "test-0.1.0")
+fn test_config() -> WorkerConfig {
+    // socket_path in WorkerConfig is no longer used for binding — the
+    // supervisor derives the socket from the worker ID. We keep the field
+    // so config deserialization stays intact; any placeholder value is fine.
+    WorkerConfig::new("bun", worker_script_path(), "test-0.1.0")
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn start_greet_shutdown_happy_path() {
-    let config = test_config("happy");
-    let supervisor = Supervisor::start(config)
+async fn start_and_shutdown_happy_path() {
+    let id = unique_worker_id("happy");
+    let supervisor = Supervisor::start(test_config(), &id)
         .await
         .expect("supervisor should start");
 
-    let client = supervisor.hello_client();
-    let response = client
-        .greet(
-            GreetRequest {
-                body: "Integration".to_string().into_bytes(),
-            },
-            RequestId::new(),
-        )
-        .await
-        .expect("greet should succeed");
-    
-    let message = String::from_utf8(response.body).unwrap();
-
-    assert!(
-        message.contains("Integration"),
-        "expected response to include greeted name, got: {}",
-        message
-    );
+    let _conn = supervisor.connection();
 
     supervisor
         .shutdown()
@@ -87,88 +63,43 @@ async fn start_greet_shutdown_happy_path() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn readiness_timeout_on_invalid_binary() {
-    let mut config = test_config("readiness-timeout");
-    // Point at a binary that doesn't exist. Config validation will reject
-    // this path before we even try to spawn.
+    let mut config = test_config();
     config.bun_path = PathBuf::from("/nonexistent/bun");
 
-    let result = Supervisor::start(config).await;
+    let result = Supervisor::start(config, unique_worker_id("readiness-timeout")).await;
     assert!(matches!(result, Err(WorkerError::Unreachable { .. })));
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shutdown_is_idempotent_via_drop() {
-    let config = test_config("drop");
-    let supervisor = Supervisor::start(config)
+    let supervisor = Supervisor::start(test_config(), unique_worker_id("drop"))
         .await
         .expect("supervisor should start");
 
-    // Drop the supervisor without calling shutdown. The Drop impl
-    // should kill the child. This test just verifies we don't panic
-    // or leak — the real assertion is that the test process exits
-    // cleanly.
     drop(supervisor);
 
-    // Give the kill a moment to propagate.
     tokio::time::sleep(Duration::from_millis(200)).await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shutdown_completes_within_grace_period() {
-    let mut config = test_config("shutdown-timing");
+    let mut config = test_config();
     config.shutdown_grace = Duration::from_secs(3);
     config.force_kill_buffer = Duration::from_secs(1);
 
-    let supervisor = Supervisor::start(config)
+    let supervisor = Supervisor::start(config, unique_worker_id("shutdown-timing"))
         .await
         .expect("supervisor should start");
 
     let start = std::time::Instant::now();
-    supervisor.shutdown().await.expect("shutdown should succeed");
+    supervisor
+        .shutdown()
+        .await
+        .expect("shutdown should succeed");
     let elapsed = start.elapsed();
 
-    // The worker should exit gracefully well within the grace period.
     assert!(
         elapsed < Duration::from_secs(5),
         "shutdown took too long: {elapsed:?}"
     );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn rpc_completes_before_shutdown_returns() {
-    // Fire an RPC and then immediately call shutdown. The RPC should
-    // complete before shutdown() returns because the Shutdown RPC is
-    // sent only after we have the channel, and the worker processes
-    // requests in FIFO order.
-    let config = test_config("rpc-then-shutdown");
-    let supervisor = Supervisor::start(config)
-        .await
-        .expect("supervisor should start");
-
-    let client = supervisor.hello_client();
-
-    let rpc = tokio::spawn(async move {
-        client
-            .greet(
-                GreetRequest {
-                    body: "shutdown-ordering".to_string().into_bytes(),
-                },
-                RequestId::new(),
-            )
-            .await
-    });
-
-    // Yield once so the RPC task has a chance to start.
-    tokio::task::yield_now().await;
-
-    supervisor.shutdown().await.expect("shutdown should succeed");
-
-    // The RPC task should have finished by now; if not, it may have been
-    // racing with the Shutdown RPC. Either outcome is safe — we just
-    // verify the task doesn't hang.
-    let result = tokio::time::timeout(Duration::from_secs(3), rpc)
-        .await
-        .expect("rpc task should complete within deadline");
-
-    assert!(result.is_ok(), "rpc task should not panic");
 }

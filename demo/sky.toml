@@ -14,13 +14,10 @@ level = "info"
 [worker]
 bun_path = "bun"
 worker_script = "./index.ts"
-socket_path = "/tmp/sky/workers/sky-worker.sock"
 worker_version = "0.1.0"
 readiness_timeout = "10s"
 shutdown_grace = "5s"
 manifest_path = "./sky-manifest.json"
 
 [build]
-sources = ["./services"]
-proto_out = "./proto/generated"
-buf_config = "./buf.gen.yaml"
+sources = ["./services", "./config"]

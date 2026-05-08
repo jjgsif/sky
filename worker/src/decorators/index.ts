@@ -3,7 +3,7 @@ export { Service, ServiceMap } from "./service";
 export { Handler } from "./handler";
 export { Middleware } from "./middleware";
 export { Group } from "./group";
-export { Body, Header, Query, Param } from "./descriptor";
+export { Body, StreamedBody, Header, Query, Param } from "./descriptor";
 export {ZodBody} from "./zod-body";
 
 export type {
@@ -22,4 +22,5 @@ export type {
     ParamDescriptor,
     HttpMethod,
     SkyClassMetadata,
+    InlineNativeMiddleware,
 } from "./types";

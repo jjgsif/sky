@@ -2,20 +2,24 @@
 //!
 //! Reads a TOML configuration file, starts a worker supervisor, and
 //! serves HTTP requests via axum. Forwards incoming HTTP requests to
-//! the worker over the Connect protocol.
+//! the worker over the Sky framing protocol.
 
 mod config;
+mod cors;
 mod manifest;
 mod validation;
 mod router;
 
 use crate::config::{GatewayConfig, LogFormat};
+use crate::cors::CorsRegistry;
 use crate::manifest::Manifest;
 use crate::router::{RouterState, build_manifest_router};
 use crate::validation::SchemaRegistry;
 use anyhow::{Context, Result};
 use clap::Parser;
-use sky_worker::Supervisor;
+use futures::future::join_all;
+use sky_worker::WorkerPool;
+use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::signal;
@@ -57,55 +61,45 @@ async fn main() -> Result<()> {
         "sky-gateway starting",
     );
 
-    // Start the worker supervisor. If this fails, the gateway can't
-    // serve requests, so we exit rather than running with 503s.
-    let supervisor = Supervisor::start(config.worker.clone())
+    // Start worker pool. If any worker fails readiness, exit immediately.
+    let pool = WorkerPool::new(config.worker.clone())
         .await
-        .context("failed to start worker supervisor")?;
-    let supervisor = Arc::new(supervisor);
+        .context("failed to start worker pool")?;
+    let pool = Arc::new(pool);
 
-    info!("worker supervisor ready; starting HTTP server");
+    info!(pool_size = config.worker.pool_size, "worker pool ready; starting HTTP server");
 
-    // Build the axum app.
-    // Load manifest
-    let manifest = Manifest::from_file(&config.manifest_path)
-        .expect("failed to load manifest");
+    let manifest = Arc::new(
+        Manifest::from_file(&config.manifest_path).expect("failed to load manifest"),
+    );
+    let schema_registry = Arc::new(
+        SchemaRegistry::from_manifest(&manifest).expect("failed to compile schemas"),
+    );
 
-    // Compile schemas
-    let schema_registry = SchemaRegistry::from_manifest(&manifest)
-        .expect("failed to compile schemas");
+    let cors_registry = Arc::new(CorsRegistry::from_manifest(&manifest));
 
-    // Build router state
-    let router_state = RouterState {
-        manifest: Arc::new(manifest),
-        schema_registry: Arc::new(schema_registry),
-        channel: supervisor.channel.load_full().as_ref().clone() // however you expose the channel
+    let app = build_manifest_router(RouterState {
+        manifest: manifest.clone(),
+        schema_registry,
+        cors: cors_registry,
+        pool: Some(pool.clone()),
+    });
+
+    let drain_timeout = config.listen.drain_timeout;
+    let threads = if config.listen.accept_threads == 0 {
+        std::thread::available_parallelism()
+            .map(|n| n.get())
+            .unwrap_or(1)
+    } else {
+        config.listen.accept_threads
     };
 
-    // Build the manifest-driven router
-    let app = build_manifest_router(router_state);
+    info!(
+        threads,
+        address = %config.listen.address,
+        "binding accept pool with SO_REUSEPORT"
+    );
 
-    // Bind the TCP listener.
-    let listener = tokio::net::TcpListener::bind(config.listen.address)
-        .await
-        .with_context(|| format!("failed to bind {}", config.listen.address))?;
-
-    info!(address = %config.listen.address, "listening for HTTP traffic");
-
-    // E1-S8: graceful shutdown with in-flight request draining.
-    //
-    // Ordered sequence:
-    //   1. Signal arrives → stop accepting new connections.
-    //   2. Wait up to drain_timeout for in-flight requests to finish.
-    //   3. Connections drained (or timeout) → server.await returns.
-    //   4. supervisor.shutdown() → Shutdown RPC, worker exits, force-kill if needed.
-    //
-    // By the time supervisor.shutdown() is called, no gRPC calls are in-flight
-    // because all HTTP handlers (which proxy to gRPC) have already completed.
-    let drain_timeout = config.listen.drain_timeout;
-
-    // Watch channel so both the graceful-shutdown signal and the drain-timeout
-    // timer can independently observe the shutdown trigger.
     let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
 
     tokio::spawn(async move {
@@ -113,24 +107,33 @@ async fn main() -> Result<()> {
         let _ = shutdown_tx.send(true);
     });
 
-    let server = axum::serve(listener, app).with_graceful_shutdown({
+    let mut serve_handles = Vec::with_capacity(threads);
+    for _ in 0..threads {
+        let listener = make_listener(config.listen.address)
+            .with_context(|| format!("failed to bind {}", config.listen.address))?;
+        let app = app.clone();
         let mut rx = shutdown_rx.clone();
-        async move {
-            let _ = rx.wait_for(|&v| v).await;
-            info!(
-                drain_timeout_secs = drain_timeout.as_secs(),
-                "shutdown signal received; draining in-flight requests"
-            );
-        }
-    });
+        let handle = tokio::spawn(async move {
+            axum::serve(listener, app)
+                .with_graceful_shutdown(async move {
+                    let _ = rx.wait_for(|&v| v).await;
+                    info!(
+                        drain_timeout_secs = drain_timeout.as_secs(),
+                        "shutdown signal received; draining in-flight requests"
+                    );
+                })
+                .await
+        });
+        serve_handles.push(handle);
+    }
 
-    // Race: server drains all connections vs. drain_timeout elapses.
-    // If drain_timeout wins, remaining connections are force-closed by
-    // dropping the server future and we proceed to worker shutdown.
+    // Race: all accept workers drain vs. drain_timeout elapses.
     tokio::select! {
-        result = server => {
-            if let Err(e) = result {
-                tracing::error!(error = %e, "server exited with error");
+        results = join_all(serve_handles) => {
+            for result in results {
+                if let Ok(Err(e)) = result {
+                    tracing::error!(error = %e, "accept worker exited with error");
+                }
             }
             info!("HTTP connections drained");
         }
@@ -148,22 +151,37 @@ async fn main() -> Result<()> {
 
     info!("HTTP server stopped; shutting down worker");
 
-    // Try to extract the supervisor from the Arc to call shutdown.
-    // If there are outstanding references, log and drop — the Drop
-    // impl will still fire and kill the child.
-    match Arc::try_unwrap(supervisor) {
-        Ok(sup) => {
-            if let Err(e) = sup.shutdown().await {
-                tracing::warn!(error = %e, "worker shutdown returned error");
+    match Arc::try_unwrap(pool) {
+        Ok(p) => {
+            if let Err(e) = p.shutdown().await {
+                tracing::warn!(error = %e, "worker pool shutdown returned error");
             }
         }
         Err(_) => {
-            tracing::warn!("supervisor still has outstanding references; relying on Drop");
+            tracing::warn!("worker pool still has outstanding references; relying on Drop");
         }
     }
 
     info!("sky-gateway exited");
     Ok(())
+}
+
+
+/// Bind a TCP socket with SO_REUSEPORT and SO_REUSEADDR set.
+///
+/// SO_REUSEPORT lets N sockets share the same addr:port. The kernel distributes
+/// incoming connections across them, eliminating the single accept-queue bottleneck.
+fn make_listener(addr: SocketAddr) -> anyhow::Result<tokio::net::TcpListener> {
+    use socket2::{Domain, Protocol, Socket, Type};
+    let domain = if addr.is_ipv4() { Domain::IPV4 } else { Domain::IPV6 };
+    let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
+    socket.set_reuse_address(true)?;
+    socket.set_reuse_port(true)?;
+    socket.set_nonblocking(true)?;
+    socket.bind(&addr.into())?;
+    socket.listen(1024)?;
+    let std_listener: std::net::TcpListener = socket.into();
+    Ok(tokio::net::TcpListener::from_std(std_listener)?)
 }
 
 /// Initialize the tracing subscriber based on configured format and level.

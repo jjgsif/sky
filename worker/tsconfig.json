@@ -11,10 +11,11 @@
         "baseUrl": ".",
         "paths": {
             "@gen/*": ["./gen/*"],
-            "@decorators": ["./src/decorators"],
-            "@emitter": ["./src/emitter"],
-            "@emitter/*": ["./src/emitter/*"],
-            "@runtime/*": ["./src/runtime/*"]
+            "@sky/decorators": ["./src/decorators"],
+            "@sky/emitter": ["./src/emitter"],
+            "@sky/emitter/*": ["./src/emitter/*"],
+            "@sky/runtime/*": ["./src/runtime/*"],
+            "@sky/transport": ["./src/transport"]
         },
         "types": ["node", "bun"]
     },
