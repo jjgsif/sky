@@ -519,10 +519,11 @@ fn errors_on_unresolved_ref() {
                 path: "/items".into(),
                 status: 201,
                 validate: true,
+                streaming: false,
                 extract: vec![crate::manifest::ExtractDescriptor {
+                    field: "body".into(),
                     source: "body".into(),
                     name: None,
-                    position: 0,
                     schema: Some(serde_json::json!({ "$ref": "#/schemas/DoesNotExist" })),
                 }],
                 response: None,

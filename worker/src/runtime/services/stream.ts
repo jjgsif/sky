@@ -1,32 +1,22 @@
-import { Service, Handler, Query } from "@sky/decorators";
+import { Service, Handler, Query, type ExtractContext } from "@sky/decorators";
 
 const encoder = new TextEncoder();
 
-// NOTE: The gateway currently buffers all chunks before forwarding to the HTTP
-// client. The streaming path (worker → gateway over UDS) works correctly —
-// RESPONSE_CHUNK frames are sent progressively — but the client receives the
-// full body in one shot. True HTTP chunked streaming to clients is a future
-// gateway enhancement.
+const eventsExtract = { count: Query("count") } as const;
+const fibonacciExtract = { limit: Query("limit") } as const;
 
 @Service({ lifetime: "singleton" })
 class StreamService {
   /**
-   * GET /stream/events?count=N
-   *
-   * Streams N NDJSON events. Each line is a JSON object:
-   *   {"seq":1,"time":"...","message":"Event 1"}
-   *
-   * Demonstrates the streaming response path:
-   *   handler returns AsyncGenerator<Uint8Array>
-   *   → dispatcher sends RESPONSE_HEAD + multiple RESPONSE_CHUNK frames
-   *   → gateway assembles the body from all chunks
+   * GET /stream/events?count=N — streams N NDJSON events.
    */
   @Handler({
     method: "GET",
     path: "/stream/events",
-    extract: [Query("count")],
+    streaming: true,
+    extract: eventsExtract,
   })
-  async events(count?: string) {
+  async events({ count }: ExtractContext<typeof eventsExtract>) {
     const n = Math.min(parseInt(count ?? "10", 10), 100);
 
     return {
@@ -37,20 +27,15 @@ class StreamService {
   }
 
   /**
-   * GET /stream/fibonacci?limit=N
-   *
-   * Streams Fibonacci numbers up to the given limit as NDJSON.
-   * Each line: {"index":0,"value":0}
-   *
-   * Illustrates lazy generation: values are computed only as the
-   * consumer pulls them, without buffering the full sequence.
+   * GET /stream/fibonacci?limit=N — streams Fibonacci numbers as NDJSON.
    */
   @Handler({
     method: "GET",
     path: "/stream/fibonacci",
-    extract: [Query("limit")],
+    streaming: true,
+    extract: fibonacciExtract,
   })
-  async fibonacci(limit?: string) {
+  async fibonacci({ limit }: ExtractContext<typeof fibonacciExtract>) {
     const max = Math.min(parseInt(limit ?? "20", 10), 200);
 
     return {

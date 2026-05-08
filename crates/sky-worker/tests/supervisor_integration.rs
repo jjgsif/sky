@@ -16,14 +16,27 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 fn worker_script_path() -> PathBuf {
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    manifest_dir
+    workspace_root().join("worker").join("src").join("index.ts")
+}
+
+fn workspace_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .parent()
         .and_then(|p| p.parent())
         .expect("workspace layout")
-        .join("worker")
-        .join("src")
-        .join("index.ts")
+        .to_path_buf()
+}
+
+/// Point the spawned Bun worker at the workspace-root manifest.
+///
+/// `cargo test -p sky-worker` runs this binary with cwd=crates/sky-worker,
+/// but the TS dispatcher imports the manifest at module-load time. Without
+/// this override, Bun crashes because there is no manifest at that cwd.
+/// Idempotent — every test sets the same value.
+fn ensure_manifest_path_env() {
+    let manifest = workspace_root().join("sky-manifest.json");
+    // SAFETY: All tests set the same value; concurrent writes converge.
+    unsafe { std::env::set_var("SKY_MANIFEST_PATH", manifest); }
 }
 
 /// Generate a unique worker ID per test so parallel tests use separate sockets.
@@ -48,6 +61,7 @@ fn test_config() -> WorkerConfig {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn start_and_shutdown_happy_path() {
+    ensure_manifest_path_env();
     let id = unique_worker_id("happy");
     let supervisor = Supervisor::start(test_config(), &id)
         .await
@@ -72,6 +86,7 @@ async fn readiness_timeout_on_invalid_binary() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shutdown_is_idempotent_via_drop() {
+    ensure_manifest_path_env();
     let supervisor = Supervisor::start(test_config(), unique_worker_id("drop"))
         .await
         .expect("supervisor should start");
@@ -83,6 +98,7 @@ async fn shutdown_is_idempotent_via_drop() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shutdown_completes_within_grace_period() {
+    ensure_manifest_path_env();
     let mut config = test_config();
     config.shutdown_grace = Duration::from_secs(3);
     config.force_kill_buffer = Duration::from_secs(1);

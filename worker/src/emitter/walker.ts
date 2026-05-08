@@ -9,15 +9,34 @@ import ts from "typescript";
  * likely tsconfig.
  */
 export function createProgram(filePaths: string[]): ts.Program {
-    const program = ts.createProgram(filePaths, {
+    // Pull baseUrl + paths from the nearest tsconfig.json so path aliases like
+    // `@sky/decorators` resolve correctly during type walking. Without this,
+    // imports become `any` and mapped types like `ExtractContext` collapse.
+    const configPath = ts.findConfigFile(
+        filePaths[0] ?? process.cwd(),
+        ts.sys.fileExists,
+        "tsconfig.json",
+    );
+
+    let parsedOptions: ts.CompilerOptions = {};
+    if (configPath) {
+        const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
+        const parsed = ts.parseJsonConfigFileContent(
+            configFile.config,
+            ts.sys,
+            configPath.replace(/[\\/][^\\/]+$/, ""),
+        );
+        parsedOptions = parsed.options;
+    }
+
+    return ts.createProgram(filePaths, {
+        ...parsedOptions,
         target: ts.ScriptTarget.ESNext,
         module: ts.ModuleKind.ESNext,
         moduleResolution: ts.ModuleResolutionKind.Bundler,
         strict: true,
         noEmit: true,
     });
-
-    return program;
 }
 
 /**

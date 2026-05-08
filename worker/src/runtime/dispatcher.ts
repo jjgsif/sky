@@ -3,7 +3,11 @@ import { ServiceRegistry } from "./service-registry.js";
 import type { SkyMiddleware, SkyResponse, SkyBody, MiddlewareContext } from "./middleware/types";
 import { HttpError } from "./errors";
 
-const manifest = await import(`${process.cwd()}/sky-manifest.json`, { with: { type: 'json' } });
+// SKY_MANIFEST_PATH overrides the default lookup (used by integration tests
+// where the worker is spawned with a cwd that doesn't contain the manifest).
+// Must be an absolute path when set.
+const manifestPath = process.env.SKY_MANIFEST_PATH ?? `${process.cwd()}/sky-manifest.json`;
+const manifest = await import(manifestPath, { with: { type: 'json' } });
 
 // ---------------------------------------------------------------------------
 // Manifest handler metadata index
@@ -110,8 +114,8 @@ async function handleInvocation(
     return;
   }
 
-  // Extract descriptors come from the registry — source of truth is the
-  // decorated source file, not the manifest. Position is implied by array index.
+  // Extract descriptors come from the registry, keyed by the field name the
+  // user declared in `extract: { id: Param("id"), body: Body(), ... }`.
   const extracts = registry.getExtracts(serviceInfo.name, methodName);
 
   // Fresh scope per request — scoped services get new instances,
@@ -120,20 +124,27 @@ async function handleInvocation(
   const service = await scope.get(serviceInfo.cls) as Record<string, Function>;
   const handler = service[methodName].bind(service);
 
-  const args = extracts.map((descriptor) => {
+  // Build the single input object passed to the handler. Keys mirror the
+  // `extract` record exactly; values come from the live invocation.
+  const input: Record<string, unknown> = {};
+  for (const [field, descriptor] of Object.entries(extracts)) {
     switch (descriptor.source) {
       case "body":
-        return descriptor.stream
+        input[field] = descriptor.stream
           ? invocation.body                   // AsyncGenerator<Uint8Array>
           : deserializeBody(invocation.body); // validated, deserialized object
+        break;
       case "query":
-        return invocation.query[descriptor.name!];
+        input[field] = invocation.query[descriptor.name];
+        break;
       case "param":
-        return invocation.params[descriptor.name!];
+        input[field] = invocation.params[descriptor.name];
+        break;
       case "header":
-        return invocation.headers[descriptor.name!.toLowerCase()];
+        input[field] = invocation.headers[descriptor.name.toLowerCase()];
+        break;
     }
-  });
+  }
 
   // Build middleware chain — native entries (CORS etc.) are hoisted to the gateway; skip them here.
   const chain: SkyMiddleware[] = meta.middleware
@@ -152,7 +163,7 @@ async function handleInvocation(
   };
 
   const leaf = async (): Promise<SkyResponse> => {
-    const result = await handler(...args);
+    const result = await handler(input);
     return normalize(result, meta.status);
   };
 

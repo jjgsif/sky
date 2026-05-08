@@ -15,7 +15,7 @@
 use crate::cors::{apply_cors_headers, CorsRegistry};
 use crate::manifest::Manifest;
 use crate::validation::{HandlerKey, SchemaRegistry, ValidationErrorResponse};
-use axum::body::Bytes;
+use axum::body::{Body, Bytes};
 use axum::extract::{MatchedPath, Path, Query, State};
 use axum::http::{header, HeaderMap, Method, StatusCode};
 use axum::response::{IntoResponse, Response};
@@ -23,9 +23,11 @@ use axum::routing::{delete, get, options, patch, post, put};
 use axum::{Extension, Json, Router};
 use serde::Serialize;
 use sky_runtime::RequestId;
-use sky_worker::{InboundFrame, InvokePayload, WorkerPool, WorkerSocket};
+use sky_worker::{InboundFrame, InvokePayload, PendingRequest, WorkerPool, WorkerSocket};
 use std::collections::HashMap;
 use std::sync::Arc;
+use tokio::sync::mpsc;
+use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, error, warn};
 
 // ── Shared state ──────────────────────────────────────────────────────────────
@@ -54,6 +56,11 @@ struct RouteInfo {
 
     /// Whether this handler has a Body() extract (for validation skipping).
     has_body: bool,
+
+    /// Whether this handler streams its response body to the client via
+    /// HTTP chunked transfer encoding (true) or buffers it before
+    /// responding (false). Drives the branch in `generic_handler`.
+    streaming: bool,
 }
 
 // ── Router construction ───────────────────────────────────────────────────────
@@ -86,6 +93,7 @@ pub fn build_manifest_router(state: RouterState) -> Router {
                 handler_id: handler_id.clone(),
                 default_status: handler.status,
                 has_body,
+                streaming: handler.streaming,
             };
 
             let method_router = match handler.method.to_uppercase().as_str() {
@@ -250,7 +258,7 @@ async fn generic_handler(
         }
     };
 
-    // First frame must be RESPONSE_HEAD (or ERROR).
+    // First frame must be RESPONSE_HEAD (or ERROR). Both code paths share this.
     let (status, response_headers) = match pending.next_frame().await {
         Some(InboundFrame::Head { status, headers }) => (status, headers),
         Some(InboundFrame::Error { message, .. }) => {
@@ -280,29 +288,25 @@ async fn generic_handler(
         }
     };
 
-    // Collect body chunks until RESPONSE_END or ERROR.
-    let mut body_chunks: Vec<u8> = Vec::new();
-    loop {
-        match pending.next_frame().await {
-            Some(InboundFrame::Chunk(bytes)) => body_chunks.extend_from_slice(&bytes),
-            Some(InboundFrame::End) => break,
-            Some(InboundFrame::Error { message, .. }) => {
-                error!(
-                    request_id = %request_id,
-                    handler_id = %route.handler_id,
-                    error = %message,
-                    "worker error after HEAD"
-                );
-                // HEAD was already received; return what we have.
-                break;
-            }
-            Some(_) => break,
-            None => break,
-        }
-    }
-
-    let mut response =
-        build_http_response(status, response_headers, body_chunks, route.default_status, &request_id);
+    let mut response = if route.streaming {
+        build_streaming_response(
+            status,
+            response_headers,
+            pending,
+            route.default_status,
+            &request_id,
+            &route.handler_id,
+        )
+    } else {
+        let body_chunks = drain_buffered(&mut pending, &request_id, &route.handler_id).await;
+        build_http_response(
+            status,
+            response_headers,
+            body_chunks,
+            route.default_status,
+            &request_id,
+        )
+    };
 
     if let (Some(origin), Some(policy)) =
         (origin_str.as_deref(), state.cors.get_by_handler(&route.handler_id))
@@ -311,6 +315,127 @@ async fn generic_handler(
     }
 
     response
+}
+
+// ── Body drainers ─────────────────────────────────────────────────────────────
+
+/// Buffered path: collect every chunk until END/ERROR, return the full body.
+async fn drain_buffered(
+    pending: &mut PendingRequest,
+    request_id: &RequestId,
+    handler_id: &str,
+) -> Vec<u8> {
+    let mut body_chunks: Vec<u8> = Vec::new();
+    loop {
+        match pending.next_frame().await {
+            Some(InboundFrame::Chunk(bytes)) => body_chunks.extend_from_slice(&bytes),
+            Some(InboundFrame::End) => break,
+            Some(InboundFrame::Error { message, .. }) => {
+                error!(
+                    request_id = %request_id,
+                    handler_id = handler_id,
+                    error = %message,
+                    "worker error after HEAD"
+                );
+                break;
+            }
+            Some(_) => break,
+            None => break,
+        }
+    }
+    body_chunks
+}
+
+/// Streaming path: build a chunked HTTP response immediately and spawn a
+/// drainer task that pumps subsequent CHUNK frames into the body stream.
+///
+/// Backpressure: the channel is bounded so a slow client pauses the drainer
+/// (and, transitively, the worker) instead of letting bytes pile up in
+/// gateway memory.
+fn build_streaming_response(
+    status: u16,
+    headers: HashMap<String, String>,
+    mut pending: PendingRequest,
+    default_status: u16,
+    request_id: &RequestId,
+    handler_id: &str,
+) -> Response {
+    let actual_status = if status > 0 { status } else { default_status };
+    let status_code = StatusCode::from_u16(actual_status).unwrap_or(StatusCode::OK);
+
+    // 8 is enough to keep the worker producing while the client reads at
+    // typical LAN speeds; larger values trade memory for fewer wakeups.
+    let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(8);
+
+    let drainer_request_id = request_id.clone();
+    let drainer_handler_id = handler_id.to_string();
+    tokio::spawn(async move {
+        loop {
+            match pending.next_frame().await {
+                Some(InboundFrame::Chunk(bytes)) => {
+                    if tx.send(Ok(bytes)).await.is_err() {
+                        debug!(
+                            request_id = %drainer_request_id,
+                            handler_id = %drainer_handler_id,
+                            "client closed stream; stopping drainer"
+                        );
+                        return;
+                    }
+                }
+                Some(InboundFrame::End) => return,
+                Some(InboundFrame::Error { message, .. }) => {
+                    error!(
+                        request_id = %drainer_request_id,
+                        handler_id = %drainer_handler_id,
+                        error = %message,
+                        "worker error mid-stream"
+                    );
+                    let _ = tx
+                        .send(Err(std::io::Error::other(message)))
+                        .await;
+                    return;
+                }
+                Some(_) => return,
+                None => {
+                    error!(
+                        request_id = %drainer_request_id,
+                        handler_id = %drainer_handler_id,
+                        "worker disconnected mid-stream"
+                    );
+                    let _ = tx
+                        .send(Err(std::io::Error::new(
+                            std::io::ErrorKind::ConnectionAborted,
+                            "worker disconnected",
+                        )))
+                        .await;
+                    return;
+                }
+            }
+        }
+    });
+
+    let body = Body::from_stream(ReceiverStream::new(rx));
+    let mut builder = Response::builder().status(status_code);
+    for (key, value) in &headers {
+        if let (Ok(name), Ok(val)) = (
+            axum::http::header::HeaderName::from_bytes(key.as_bytes()),
+            axum::http::header::HeaderValue::from_str(value),
+        ) {
+            builder = builder.header(name, val);
+        }
+    }
+    if let Ok(val) = axum::http::header::HeaderValue::from_str(&request_id.to_string()) {
+        builder = builder.header("x-request-id", val);
+    }
+
+    builder.body(body).unwrap_or_else(|e| {
+        error!(request_id = %request_id, error = %e, "failed to build streaming response");
+        make_error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "response_build_failed",
+            &e.to_string(),
+        )
+    })
 }
 
 // ── Response building ─────────────────────────────────────────────────────────

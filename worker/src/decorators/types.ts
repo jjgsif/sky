@@ -14,12 +14,36 @@ interface ServiceRegistration {
     group?: GroupDefinition;
 }
 
-interface BodyDescriptor { source: "body", stream: boolean }
+// `__t` is a phantom type used purely for inference — not present at runtime
+// (the factory casts `null` into it). The function type `(x: T) => T` makes T
+// invariant, so `BodyDescriptor<X>` and `BodyDescriptor<Y>` are only assignable
+// when X = Y. That precision is what lets `ExtractValue<BodyDescriptor<infer T>>`
+// recover the right T inside `ExtractContext`.
+interface BodyDescriptor<T = unknown> {
+    source: "body";
+    stream: boolean;
+    /** Phantom — never invoked. */
+    __t: (x: T) => T;
+}
 interface HeaderDescriptor { source: "header"; name: string }
 interface QueryDescriptor { source: "query"; name: string }
 interface ParamDescriptor { source: "param"; name: string }
 
-type ExtractDescriptor = BodyDescriptor | HeaderDescriptor | QueryDescriptor | ParamDescriptor;
+// `BodyDescriptor<any>` widens the union so any specific `BodyDescriptor<T>`
+// (from Body<T>() or ZodBody) is assignable. Inference still recovers the
+// precise T via `ExtractValue` below.
+type ExtractDescriptor = BodyDescriptor<any> | HeaderDescriptor | QueryDescriptor | ParamDescriptor;
+
+type ExtractValue<E> =
+    E extends BodyDescriptor<infer T> ? T :
+    E extends ParamDescriptor          ? string :
+    E extends QueryDescriptor          ? string | undefined :
+    E extends HeaderDescriptor         ? string | undefined :
+    never;
+
+type ExtractContext<E> = {
+    [K in keyof E]: ExtractValue<E[K]>;
+};
 
 type HttpMethod = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
 
@@ -33,8 +57,9 @@ interface HandlerDefinition {
     method: HttpMethod;
     path: string;
     status: number;
-    extract: ExtractDescriptor[];
+    extract: Record<string, ExtractDescriptor>;
     validate: boolean;
+    streaming: boolean;
     middleware?: (Function | InlineNativeMiddleware)[];
 }
 
@@ -42,8 +67,9 @@ interface HandlerOptions {
     path: string;
     method: HttpMethod;
     status?: number;
-    extract?: ExtractDescriptor[];
+    extract?: Record<string, ExtractDescriptor>;
     validate?: boolean;
+    streaming?: boolean;
     middleware?: (Function | InlineNativeMiddleware)[];
 }
 
@@ -83,6 +109,8 @@ export type {
     QueryDescriptor,
     ParamDescriptor,
     ExtractDescriptor,
+    ExtractValue,
+    ExtractContext,
     HttpMethod,
     HandlerDefinition,
     HandlerOptions,

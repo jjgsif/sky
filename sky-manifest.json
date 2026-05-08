@@ -1,7 +1,7 @@
 {
   "version": "1",
-  "hash": "sha256:4181743110969345cabd92a80aa69838d31f704eec22087ed802d278458d4663",
-  "emitted_at": "2026-05-07T17:36:54.961Z",
+  "hash": "sha256:cf05e831fba16208dad697bfa35de6ca5f4dde740dc10a6d974543bdfd787316",
+  "emitted_at": "2026-05-07T22:45:32.202Z",
   "services": [
     {
       "name": "HelloService",
@@ -15,10 +15,11 @@
           "path": "/hello",
           "status": 201,
           "validate": true,
+          "streaming": false,
           "extract": [
             {
+              "field": "body",
               "source": "body",
-              "position": 0,
               "schema": {
                 "type": "object",
                 "properties": {
@@ -69,10 +70,11 @@
           "path": "/stream/events",
           "status": 200,
           "validate": true,
+          "streaming": true,
           "extract": [
             {
+              "field": "count",
               "source": "query",
-              "position": 0,
               "name": "count"
             }
           ],
@@ -110,10 +112,11 @@
           "path": "/stream/fibonacci",
           "status": 200,
           "validate": true,
+          "streaming": true,
           "extract": [
             {
+              "field": "limit",
               "source": "query",
-              "position": 0,
               "name": "limit"
             }
           ],
@@ -162,11 +165,11 @@
         "throw": {
           "$ref": "#/schemas/throw"
         },
-        "__@asyncIterator@23": {
+        "__@asyncIterator@61": {
           "type": "object",
           "properties": {}
         },
-        "__@asyncDispose@37": {
+        "__@asyncDispose@75": {
           "type": "object",
           "properties": {}
         }
@@ -175,8 +178,8 @@
         "next",
         "return",
         "throw",
-        "__@asyncIterator@23",
-        "__@asyncDispose@37"
+        "__@asyncIterator@61",
+        "__@asyncDispose@75"
       ]
     },
     "next": {

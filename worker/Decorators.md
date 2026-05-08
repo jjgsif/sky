@@ -172,6 +172,7 @@ interface HandlerOptions {
     status?: number;        // default: GET→200, POST→201, PUT/PATCH→200, DELETE→204
     extract?: ExtractDescriptor[];
     validate?: boolean;     // default: true
+    streaming?: boolean;    // default: false — see "Streaming responses" below
     middleware?: (Function | InlineNativeMiddleware)[];
 }
 
@@ -195,6 +196,51 @@ class ItemService {
     }
 }
 ```
+
+### Streaming responses
+
+Set `streaming: true` to send the response body to the HTTP client chunk-by-chunk
+via HTTP/1.1 chunked transfer encoding, instead of buffering it in the gateway
+until the worker finishes. The handler must return an `AsyncGenerator<Uint8Array>`
+(or a wrapper that exposes one as `body`); each `yield` becomes a wire chunk
+forwarded to the client immediately, lowering TTFB and allowing arbitrarily
+large responses (NDJSON streams, file downloads, SSE) without proportional
+gateway memory.
+
+```ts
+@Service({ lifetime: "singleton" })
+class StreamService {
+    @Handler({
+        method: "GET",
+        path: "/stream/events",
+        streaming: true,
+        extract: [Query("count")],
+    })
+    async events(count?: string) {
+        const n = Math.min(parseInt(count ?? "10", 10), 100);
+        return {
+            status: 200,
+            headers: { "content-type": "application/x-ndjson" },
+            body: generate(n),
+        };
+    }
+}
+
+async function* generate(n: number): AsyncGenerator<Uint8Array> {
+    const enc = new TextEncoder();
+    for (let i = 1; i <= n; i++) {
+        yield enc.encode(JSON.stringify({ seq: i }) + "\n");
+    }
+}
+```
+
+Backpressure is enforced by a bounded channel between the worker and the
+gateway's response stream, so a slow client throttles the producer rather
+than ballooning gateway memory.
+
+Leave `streaming: false` (the default) for unary JSON responses — the buffered
+path has slightly lower per-request overhead and emits a `Content-Length`
+header.
 
 ---
 

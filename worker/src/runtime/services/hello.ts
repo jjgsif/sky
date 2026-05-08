@@ -1,15 +1,17 @@
-import { Service, Handler, Body } from "@sky/decorators";
+import { Service, Handler, Body, type ExtractContext } from "@sky/decorators";
 import { cors } from "@sky/runtime/middleware";
+
+const greetExtract = { body: Body<{ name: string }>() } as const;
 
 @Service({ lifetime: "singleton" })
 class HelloService {
   @Handler({
     method: "POST",
     path: "/hello",
-    extract: [Body()],
+    extract: greetExtract,
     middleware: [cors({ origins: ["*"] })],
   })
-  async greet(body: { name: string }) {
+  async greet({ body }: ExtractContext<typeof greetExtract>) {
     return { message: `Hello ${body.name}` };
   }
 }

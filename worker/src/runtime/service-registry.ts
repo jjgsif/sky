@@ -120,14 +120,14 @@ export class ServiceRegistry {
   }
 
   /**
-   * Get the extract descriptors for a handler method.
-   * Position is implied by array index.
+   * Get the extract descriptors for a handler method, keyed by the field
+   * name that will appear in the handler's input object.
    */
   getExtracts(
     serviceName: string,
     handlerName: string
-  ): ExtractDescriptor[] {
-    return this.getHandlerDefinition(serviceName, handlerName)?.extract ?? [];
+  ): Record<string, ExtractDescriptor> {
+    return this.getHandlerDefinition(serviceName, handlerName)?.extract ?? {};
   }
 
   /**

@@ -12,6 +12,7 @@ const Handler = (options: HandlerOptions) => {
             method: options.method,
             path: options.path,
             validate: options.validate ?? true,
+            streaming: options.streaming ?? false,
         };
         if (options.middleware?.length) def.middleware = options.middleware;
         (context.metadata.handlers as Map<string, HandlerDefinition>).set(context.name.toString(), def);

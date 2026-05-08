@@ -16,6 +16,8 @@ export type {
     GroupDefinition,
     GroupOptions,
     ExtractDescriptor,
+    ExtractValue,
+    ExtractContext,
     BodyDescriptor,
     HeaderDescriptor,
     QueryDescriptor,

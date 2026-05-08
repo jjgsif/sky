@@ -27,6 +27,7 @@ license = "MIT OR Apache-2.0"
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
+tokio-stream = "0.1"
 
 # Observability
 tracing = "0.1"

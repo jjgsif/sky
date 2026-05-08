@@ -35,15 +35,18 @@ export interface ManifestHandler {
     path: string;
     status: number;
     validate: boolean;
+    streaming: boolean;
     extract: ManifestExtract[];
     response?: JsonSchema;
     middleware?: ManifestMiddlewareEntry[];
 }
 
 export interface ManifestExtract {
+    /** Field name in the handler's input object (the key in `extract: { ... }`). */
+    field: string;
     source: "body" | "query" | "param" | "header";
+    /** Source-side name (header name, query/param key). Absent for body. */
     name?: string;
-    position: number;
     schema?: JsonSchema
 }
 
@@ -62,15 +65,11 @@ export interface ManifestGroup {
 }
 
 import ts from "typescript";
-import { createProgram, findTypeDeclarations } from "./walker";
+import { createProgram } from "./walker";
 import { typeToJsonSchema, type JsonSchema } from "./schema";
 import { SchemaRegistry } from "./registry";
 import { ServiceMap } from "../decorators";
-import type {
-    ServiceRegistration,
-    HandlerDefinition,
-    ExtractDescriptor,
-} from "../decorators";
+import type { ServiceRegistration } from "../decorators";
 import { getNativeMiddleware } from "./native-middleware";
 import { createHash } from "crypto";
 import fs from "fs";
@@ -244,46 +243,52 @@ function processHandlers(
             ? findMethodDeclaration(classNode, methodName)
             : undefined;
 
-        // Process each extract descriptor
-        handlerDef.extract.forEach((descriptor, position) => {
+        // The handler now takes a single input object. Look it up once so we
+        // can walk individual field types out of it for body schemas. Prefer
+        // the explicit type annotation (handles destructure patterns where
+        // `getTypeAtLocation` would otherwise return a synthesized binding type).
+        const inputParam = methodNode?.parameters[0];
+        const inputType = inputParam?.type
+            ? checker.getTypeFromTypeNode(inputParam.type)
+            : (inputParam ? checker.getTypeAtLocation(inputParam) : undefined);
+
+        // Process each extract descriptor (keyed by the input-object field).
+        for (const [field, descriptor] of Object.entries(handlerDef.extract)) {
             const extract: ManifestExtract = {
+                field,
                 source: descriptor.source,
-                position,
             };
 
             // Add name for named sources
             if (descriptor.source !== "body") {
-                extract.name = (descriptor as any).name;
+                extract.name = (descriptor as { name: string }).name;
             }
 
             // Check for Zod override FIRST — skip type walking entirely
             if ("jsonSchema" in descriptor) {
-                const zodDescriptor = descriptor as any;
-                const typeName = methodNode
-                    ? getParameterTypeName(methodNode, position, checker)
-                    : `${methodName}_body`;
+                const zodDescriptor = descriptor as { jsonSchema: JsonSchema };
+                const typeName = `${methodName}_${field}`;
                 registry.registerZodOverride(typeName, zodDescriptor.jsonSchema);
                 extract.schema = { $ref: `#/schemas/${typeName}` };
                 extracts.push(extract);
-                return; // skip type walking for this parameter
+                continue;
             }
 
-            // For body descriptors, extract the type schema
-            if (descriptor.source === "body" && methodNode) {
-                const param = methodNode.parameters[position];
-                if (param && param.type) {
-                    const paramType = checker.getTypeAtLocation(param);
-                    const schemaRef = typeToJsonSchema(
-                        paramType,
-                        checker,
-                        registry,
+            // For body descriptors, walk the field's declared type out of the
+            // handler's input-object parameter (e.g. `{ body: ItemType }`).
+            if (descriptor.source === "body" && inputType && inputParam) {
+                const fieldSymbol = inputType.getProperty(field);
+                if (fieldSymbol) {
+                    const fieldType = checker.getTypeOfSymbolAtLocation(
+                        fieldSymbol,
+                        inputParam,
                     );
-                    extract.schema = schemaRef;
+                    extract.schema = typeToJsonSchema(fieldType, checker, registry);
                 }
             }
 
             extracts.push(extract);
-        });
+        }
 
         // Extract response type
         let response: JsonSchema | undefined;
@@ -308,6 +313,7 @@ function processHandlers(
             path: handlerDef.path,
             status: handlerDef.status,
             validate: handlerDef.validate ?? true,
+            streaming: handlerDef.streaming ?? false,
             extract: extracts,
             response,
         };
@@ -336,20 +342,6 @@ function processDependencies(
         }
         return { type: "string" as const, value: dep, position };
     });
-}
-
-function getParameterTypeName(
-    method: ts.MethodDeclaration,
-    position: number,
-    checker: ts.TypeChecker,
-): string {
-    const param = method.parameters[position];
-    if (param && param.type) {
-        const type = checker.getTypeAtLocation(param);
-        const symbol = type.getSymbol();
-        if (symbol) return symbol.name;
-    }
-    return `param_${position}`;
 }
 
 function unwrapPromise(

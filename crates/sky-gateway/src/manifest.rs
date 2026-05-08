@@ -38,8 +38,8 @@ pub enum ManifestError {
     #[error("unresolved schema $ref: {0}")]
     UnresolvedRef(String),
 
-    #[error("handler '{handler}' on service '{service}' has non-contiguous parameter positions: {details}")]
-    NonContiguousParams {
+    #[error("handler '{handler}' on service '{service}' has duplicate extract field names: {details}")]
+    DuplicateExtractField {
         service: String,
         handler: String,
         details: String,
@@ -146,6 +146,12 @@ pub struct HandlerDescriptor {
     #[serde(default = "default_validate")]
     pub validate: bool,
 
+    /// Whether the response is streamed chunk-by-chunk to the client
+    /// (HTTP chunked transfer encoding) rather than buffered. Defaults to
+    /// false so older manifests continue to deserialize unchanged.
+    #[serde(default)]
+    pub streaming: bool,
+
     /// Parameter extraction descriptors.
     pub extract: Vec<ExtractDescriptor>,
 
@@ -169,6 +175,13 @@ fn default_validate() -> bool {
 /// Describes how a single handler parameter is extracted from the request.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ExtractDescriptor {
+    /// Field name in the handler's input object — the key the user wrote in
+    /// `extract: { id: Param("id"), body: Body() }`. Defaulted to an empty
+    /// string for backward compatibility with manifests emitted before the
+    /// record-shaped extract migration.
+    #[serde(default)]
+    pub field: String,
+
     /// Source of the value: "body", "query", "param", "header".
     pub source: String,
 
@@ -176,9 +189,6 @@ pub struct ExtractDescriptor {
     /// `None` for body parameters.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-
-    /// Parameter position in the handler method signature (0-indexed).
-    pub position: u32,
 
     /// JSON Schema for this parameter (inline or `$ref`).
     /// Present for body parameters; typically absent for scalar extracts.
@@ -286,7 +296,7 @@ impl Manifest {
     fn validate(&self) -> Result<(), ManifestError> {
         self.check_duplicate_routes()?;
         self.check_schema_refs()?;
-        self.check_param_positions()?;
+        self.check_extract_fields()?;
         Ok(())
     }
 
@@ -365,26 +375,27 @@ impl Manifest {
         Ok(())
     }
 
-    /// Verify handler parameter positions are contiguous (0, 1, 2, …).
-    fn check_param_positions(&self) -> Result<(), ManifestError> {
+    /// Verify each handler's extract field names are unique. With the
+    /// record-shaped extract (`{ id: ..., body: ... }`) emitted by the TS
+    /// assembler, duplicates would silently shadow earlier entries — flag
+    /// them at load time instead.
+    fn check_extract_fields(&self) -> Result<(), ManifestError> {
         for service in &self.services {
             for handler in &service.handlers {
-                if handler.extract.is_empty() {
-                    continue;
-                }
-
-                let mut positions: Vec<u32> =
-                    handler.extract.iter().map(|e| e.position).collect();
-                positions.sort_unstable();
-                positions.dedup();
-
-                let expected: Vec<u32> = (0..positions.len() as u32).collect();
-                if positions != expected {
-                    return Err(ManifestError::NonContiguousParams {
-                        service: service.name.clone(),
-                        handler: handler.name.clone(),
-                        details: format!("found positions {:?}, expected {:?}", positions, expected),
-                    });
+                let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+                for entry in &handler.extract {
+                    // Pre-migration manifests emit an empty `field` (defaulted
+                    // by serde); skip the uniqueness check in that case.
+                    if entry.field.is_empty() {
+                        continue;
+                    }
+                    if !seen.insert(entry.field.as_str()) {
+                        return Err(ManifestError::DuplicateExtractField {
+                            service: service.name.clone(),
+                            handler: handler.name.clone(),
+                            details: format!("duplicate field '{}'", entry.field),
+                        });
+                    }
                 }
             }
         }
@@ -931,32 +942,32 @@ mod tests {
         Manifest::from_json(&json).unwrap();
     }
 
-    // ── Parameter position validation ───────────
+    // ── Extract field uniqueness ────────────────
 
     #[test]
-    fn detects_non_contiguous_positions() {
+    fn detects_duplicate_extract_fields() {
         let json = single_handler_manifest(
             "POST",
             "/test",
             serde_json::json!([
-                { "source": "body", "position": 0 },
-                { "source": "query", "name": "q", "position": 2 }
+                { "field": "x", "source": "query", "name": "page" },
+                { "field": "x", "source": "query", "name": "limit" }
             ]),
         );
 
         let err = Manifest::from_json(&json).unwrap_err();
-        assert!(matches!(err, ManifestError::NonContiguousParams { .. }));
+        assert!(matches!(err, ManifestError::DuplicateExtractField { .. }));
     }
 
     #[test]
-    fn accepts_contiguous_positions() {
+    fn accepts_unique_extract_fields() {
         let json = single_handler_manifest(
             "POST",
             "/test",
             serde_json::json!([
-                { "source": "body", "position": 0 },
-                { "source": "query", "name": "page", "position": 1 },
-                { "source": "header", "name": "x-request-id", "position": 2 }
+                { "field": "body",  "source": "body" },
+                { "field": "page",  "source": "query",  "name": "page" },
+                { "field": "trace", "source": "header", "name": "x-request-id" }
             ]),
         );
 
