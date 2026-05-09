@@ -1,7 +1,7 @@
 {
   "version": "1",
-  "hash": "sha256:0db3bef7a9d3319cad367ad738838fbdd75789eca1801639144e4f1531e0a4fe",
-  "emitted_at": "2026-05-07T05:13:47.324Z",
+  "hash": "sha256:ec5e9ae281b3c4d5ba04be8d16e55669e777b0f400b780941c47160618c2a647",
+  "emitted_at": "2026-05-09T18:53:59.376Z",
   "services": [
     {
       "name": "HelloService",
@@ -15,10 +15,11 @@
           "path": "/hello",
           "status": 201,
           "validate": true,
+          "streaming": false,
           "extract": [
             {
+              "field": "body",
               "source": "body",
-              "position": 0,
               "schema": {
                 "type": "object",
                 "properties": {
@@ -42,6 +43,109 @@
             "required": [
               "message"
             ]
+          },
+          "middleware": [
+            {
+              "kind": "native",
+              "name": "rateLimit",
+              "config": {
+                "bucket": "api",
+                "perMinute": 20000,
+                "identifier": "ip"
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "StreamService",
+      "className": "StreamService",
+      "lifetime": "singleton",
+      "dependencies": [],
+      "handlers": [
+        {
+          "name": "events",
+          "method": "GET",
+          "path": "/stream/events",
+          "status": 200,
+          "validate": true,
+          "streaming": true,
+          "extract": [
+            {
+              "field": "count",
+              "source": "query",
+              "name": "count"
+            }
+          ],
+          "response": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "number"
+              },
+              "headers": {
+                "type": "object",
+                "properties": {
+                  "content-type": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "content-type"
+                ]
+              },
+              "body": {
+                "$ref": "#/schemas/AsyncGenerator"
+              }
+            },
+            "required": [
+              "status",
+              "headers",
+              "body"
+            ]
+          }
+        },
+        {
+          "name": "fibonacci",
+          "method": "GET",
+          "path": "/stream/fibonacci",
+          "status": 200,
+          "validate": true,
+          "streaming": true,
+          "extract": [
+            {
+              "field": "limit",
+              "source": "query",
+              "name": "limit"
+            }
+          ],
+          "response": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "number"
+              },
+              "headers": {
+                "type": "object",
+                "properties": {
+                  "content-type": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "content-type"
+                ]
+              },
+              "body": {
+                "$ref": "#/schemas/AsyncGenerator"
+              }
+            },
+            "required": [
+              "status",
+              "headers",
+              "body"
+            ]
           }
         }
       ]
@@ -58,15 +162,16 @@
           "path": "/users",
           "status": 200,
           "validate": true,
+          "streaming": false,
           "extract": [
             {
+              "field": "token",
               "source": "header",
-              "position": 0,
               "name": "x-admin-token"
             },
             {
+              "field": "page",
               "source": "query",
-              "position": 1,
               "name": "page"
             }
           ],
@@ -96,10 +201,11 @@
           "path": "/stats",
           "status": 200,
           "validate": true,
+          "streaming": false,
           "extract": [
             {
+              "field": "token",
               "source": "header",
-              "position": 0,
               "name": "x-admin-token"
             }
           ],
@@ -141,6 +247,7 @@
           "path": "/health",
           "status": 200,
           "validate": true,
+          "streaming": false,
           "extract": [],
           "response": {
             "type": "object",
@@ -176,12 +283,13 @@
           "path": "/users",
           "status": 201,
           "validate": true,
+          "streaming": false,
           "extract": [
             {
+              "field": "body",
               "source": "body",
-              "position": 0,
               "schema": {
-                "$ref": "#/schemas/__type"
+                "$ref": "#/schemas/createUser_body"
               }
             }
           ],
@@ -195,10 +303,11 @@
           "path": "/users/:id",
           "status": 200,
           "validate": true,
+          "streaming": false,
           "extract": [
             {
+              "field": "id",
               "source": "param",
-              "position": 0,
               "name": "id"
             }
           ],
@@ -212,15 +321,16 @@
           "path": "/users",
           "status": 200,
           "validate": true,
+          "streaming": false,
           "extract": [
             {
+              "field": "page",
               "source": "query",
-              "position": 0,
               "name": "page"
             },
             {
+              "field": "limit",
               "source": "query",
-              "position": 1,
               "name": "limit"
             }
           ],
@@ -257,17 +367,18 @@
           "path": "/users/:id",
           "status": 200,
           "validate": true,
+          "streaming": false,
           "extract": [
             {
+              "field": "id",
               "source": "param",
-              "position": 0,
               "name": "id"
             },
             {
+              "field": "body",
               "source": "body",
-              "position": 1,
               "schema": {
-                "$ref": "#/schemas/__type"
+                "$ref": "#/schemas/updateUser_body"
               }
             }
           ],
@@ -281,10 +392,11 @@
           "path": "/users/:id",
           "status": 204,
           "validate": true,
+          "streaming": false,
           "extract": [
             {
+              "field": "id",
               "source": "param",
-              "position": 0,
               "name": "id"
             }
           ],
@@ -316,7 +428,48 @@
     }
   ],
   "schemas": {
-    "__type": {
+    "AsyncGenerator": {
+      "type": "object",
+      "properties": {
+        "next": {
+          "$ref": "#/schemas/next"
+        },
+        "return": {
+          "$ref": "#/schemas/return"
+        },
+        "throw": {
+          "$ref": "#/schemas/throw"
+        },
+        "__@asyncIterator@68": {
+          "type": "object",
+          "properties": {}
+        },
+        "__@asyncDispose@82": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      "required": [
+        "next",
+        "return",
+        "throw",
+        "__@asyncIterator@68",
+        "__@asyncDispose@82"
+      ]
+    },
+    "next": {
+      "type": "object",
+      "properties": {}
+    },
+    "return": {
+      "type": "object",
+      "properties": {}
+    },
+    "throw": {
+      "type": "object",
+      "properties": {}
+    },
+    "createUser_body": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
       "properties": {
@@ -330,6 +483,7 @@
           "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
         },
         "role": {
+          "default": "member",
           "type": "string",
           "enum": [
             "admin",
@@ -337,6 +491,11 @@
           ]
         }
       },
+      "required": [
+        "name",
+        "email",
+        "role"
+      ],
       "additionalProperties": false
     },
     "Response": {
@@ -463,11 +622,11 @@
         "getOrInsertComputed": {
           "$ref": "#/schemas/getOrInsertComputed"
         },
-        "__@iterator@403": {
+        "__@iterator@512": {
           "type": "object",
           "properties": {}
         },
-        "__@toStringTag@688": {
+        "__@toStringTag@58": {
           "type": "string"
         }
       },
@@ -484,8 +643,8 @@
         "values",
         "getOrInsert",
         "getOrInsertComputed",
-        "__@iterator@403",
-        "__@toStringTag@688"
+        "__@iterator@512",
+        "__@toStringTag@58"
       ]
     },
     "clear": {
@@ -598,6 +757,29 @@
     "getCookies": {
       "type": "object",
       "properties": {}
+    },
+    "updateUser_body": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "pattern": "^(?!\\.)(?!.*\\.\\.)([A-Za-z0-9_'+\\-\\.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9\\-]*\\.)+[A-Za-z]{2,}$"
+        },
+        "role": {
+          "type": "string",
+          "enum": [
+            "admin",
+            "member"
+          ]
+        }
+      },
+      "additionalProperties": false
     }
   }
 }

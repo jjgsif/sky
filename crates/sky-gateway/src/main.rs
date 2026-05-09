@@ -9,6 +9,7 @@ mod cors;
 mod manifest;
 mod validation;
 mod router;
+mod rate_limit;
 
 use crate::config::{GatewayConfig, LogFormat};
 use crate::cors::CorsRegistry;
@@ -25,6 +26,7 @@ use std::sync::Arc;
 use tokio::signal;
 use tracing::info;
 use tracing_subscriber::EnvFilter;
+use crate::rate_limit::{connect_redis, RateLimiter};
 
 /// CLI arguments for the gateway binary.
 #[derive(Debug, Parser)]
@@ -78,10 +80,31 @@ async fn main() -> Result<()> {
 
     let cors_registry = Arc::new(CorsRegistry::from_manifest(&manifest));
 
+    let rate_limit_registry = Arc::new(match &config.rate_limit.redis_url {
+        Some(url) => {
+            match connect_redis(url, config.rate_limit.pool_size, config.rate_limit.command_timeout).await {
+                Ok(redis) => {
+                    info!(url = %url, pool_size = config.rate_limit.pool_size, "rate-limit Redis backend connected");
+                    RateLimiter::with_redis_backend(&manifest, redis)
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        url = %url,
+                        "failed to connect rate-limit Redis backend; falling back to local window"
+                    );
+                    RateLimiter::from_manifest(&manifest)
+                }
+            }
+        }
+        None => RateLimiter::from_manifest(&manifest),
+    });
+    
     let app = build_manifest_router(RouterState {
         manifest: manifest.clone(),
         schema_registry,
         cors: cors_registry,
+        rate_limit: rate_limit_registry,
         pool: Some(pool.clone()),
     });
 

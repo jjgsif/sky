@@ -1,0 +1,34 @@
+# Sky Demo — Docker configuration
+# Used by demo/Dockerfile; not intended for local development.
+# Local dev: use sky.toml instead.
+
+version = "1"
+
+[listen]
+# Bind all interfaces so the port is reachable from outside the container.
+address = "0.0.0.0:8080"
+body_limit = "1mb"
+
+[logging]
+# JSON logs integrate cleanly with container log drivers (Docker, k8s, etc.)
+format = "json"
+level = "info"
+
+[worker]
+bun_path = "bun"
+worker_script = "./index.ts"
+worker_version = "0.1.0"
+readiness_timeout = "10s"
+shutdown_grace = "5s"
+manifest_path = "./sky-manifest.json"
+
+[rate_limit]
+# Points at the valkey service defined in docker-compose.yaml.
+# If Valkey is unreachable the gateway falls back to an in-process
+# local window and logs an error — no crash, no silent drop.
+redis_url = "redis://valkey:6379"
+pool_size = 4
+command_timeout = "2s"
+
+[build]
+sources = ["./services", "./config"]

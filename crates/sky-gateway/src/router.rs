@@ -29,7 +29,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, error, warn};
-
+use crate::rate_limit::{RateLimiter, RateLimitOutcome};
 // ── Shared state ──────────────────────────────────────────────────────────────
 
 /// Application state shared across all route handlers.
@@ -38,6 +38,7 @@ pub struct RouterState {
     pub manifest: Arc<Manifest>,
     pub schema_registry: Arc<SchemaRegistry>,
     pub cors: Arc<CorsRegistry>,
+    pub rate_limit: Arc<RateLimiter>,
     /// Worker pool. `None` in validation-only tests that don't need a real worker.
     pub pool: Option<Arc<WorkerPool>>,
 }
@@ -207,6 +208,15 @@ async fn generic_handler(
     } else {
         Vec::new()
     };
+
+    // ── Rate limiting ────────────────────────────────────────────────────────
+
+    let peer_ip = resolve_peer_ip(&headers);
+    if let RateLimitOutcome::Denied { retry_after_secs } =
+        state.rate_limit.check_and_record(&route.handler_id, &headers, &peer_ip).await
+    {
+        return make_rate_limited_response(retry_after_secs);
+    }
 
     // ── Worker connection check ──────────────────────────────────────────────
 
@@ -495,6 +505,32 @@ fn make_validation_error_response(err: ValidationErrorResponse) -> Response {
     (StatusCode::BAD_REQUEST, Json(err)).into_response()
 }
 
+fn make_rate_limited_response(retry_after_secs: u64) -> Response {
+    let mut resp = make_error_response(
+        StatusCode::TOO_MANY_REQUESTS,
+        "rate_limited",
+        "Too many requests",
+    );
+    if let Ok(val) = header::HeaderValue::from_str(&retry_after_secs.to_string()) {
+        resp.headers_mut().insert(header::RETRY_AFTER, val);
+    }
+    resp
+}
+
+/// Extract the client IP for rate limiting.
+///
+/// Prefers the leftmost address in `x-forwarded-for` (the original client as
+/// seen by a proxy/load balancer). Falls back to `"unknown"` for direct
+/// connections without that header.
+fn resolve_peer_ip(headers: &HeaderMap) -> String {
+    headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.split(',').next())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "unknown".to_string())
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
@@ -509,10 +545,12 @@ mod tests {
         let manifest = Manifest::from_json(manifest_json).unwrap();
         let schema_registry = SchemaRegistry::from_manifest(&manifest).unwrap();
         let cors_registry = CorsRegistry::from_manifest(&manifest);
+        let rate_limiter = RateLimiter::from_manifest(&manifest);
         RouterState {
             manifest: Arc::new(manifest),
             schema_registry: Arc::new(schema_registry),
             cors: Arc::new(cors_registry),
+            rate_limit: Arc::new(rate_limiter),
             pool: None, // no worker needed for routing / validation tests
         }
     }

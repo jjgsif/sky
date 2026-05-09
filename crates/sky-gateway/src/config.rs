@@ -47,10 +47,52 @@ pub struct GatewayConfig {
 
     pub worker: WorkerConfig,
 
+    /// Rate-limit backend configuration. Defaults to in-process tracking.
+    #[serde(default)]
+    pub rate_limit: RateLimitBackendConfig,
+
     /// Path to the manifest file produced by `sky build`.
     /// Defaults to ./sky-manifest.json.
     #[serde(default = "default_manifest_path")]
     pub manifest_path: PathBuf,
+}
+
+/// Configures where sliding-window counters are stored.
+///
+/// Omitting `[rate_limit]` entirely (or omitting `redis_url`) keeps counters
+/// in-process via DashMap — fast but not shared across gateway instances.
+/// Setting `redis_url` enables distributed limiting; the gateway automatically
+/// falls back to the local window if Redis becomes unreachable.
+///
+/// ```toml
+/// [rate_limit]
+/// redis_url      = "redis://127.0.0.1:6379"
+/// pool_size      = 4
+/// command_timeout = "2s"
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RateLimitBackendConfig {
+    /// Redis connection URL. `None` → in-process local window only.
+    #[serde(default)]
+    pub redis_url: Option<String>,
+
+    /// Number of pooled Redis connections. Default: 4.
+    #[serde(default = "default_rl_pool_size")]
+    pub pool_size: usize,
+
+    /// Per-command Redis timeout. Default: 2s.
+    #[serde(with = "humantime_serde", default = "default_rl_command_timeout")]
+    pub command_timeout: Duration,
+}
+
+impl Default for RateLimitBackendConfig {
+    fn default() -> Self {
+        Self {
+            redis_url: None,
+            pool_size: default_rl_pool_size(),
+            command_timeout: default_rl_command_timeout(),
+        }
+    }
 }
 
 /// HTTP server configuration.
@@ -162,6 +204,14 @@ fn default_log_level() -> String {
 
 fn default_manifest_path() -> PathBuf {
     PathBuf::from("./sky-manifest.json")
+}
+
+fn default_rl_pool_size() -> usize {
+    4
+}
+
+fn default_rl_command_timeout() -> Duration {
+    Duration::from_secs(2)
 }
 
 /// Human-readable byte size serialization.

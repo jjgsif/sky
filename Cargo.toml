@@ -76,6 +76,7 @@ anyhow = "1"
 arc-swap = "1.9.1"
 bytes = "1"
 dashmap = { version = "6.1.0" }
+fred = { version = "10", features = ["i-scripts"] }
 jsonschema = "0.46.2"
 rmp-serde = "1"
 serde_bytes = "0.11"

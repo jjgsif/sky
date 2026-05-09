@@ -47,10 +47,10 @@ type ExtractContext<E> = {
 
 type HttpMethod = "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
 
-interface InlineNativeMiddleware {
+interface InlineNativeMiddleware<T = unknown> {
     kind: "native";
     name: string;
-    config?: unknown;
+    config?: T;
 }
 
 interface HandlerDefinition {

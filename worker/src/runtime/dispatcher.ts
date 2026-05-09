@@ -3,12 +3,6 @@ import { ServiceRegistry } from "./service-registry.js";
 import type { SkyMiddleware, SkyResponse, SkyBody, MiddlewareContext } from "./middleware/types";
 import { HttpError } from "./errors";
 
-// SKY_MANIFEST_PATH overrides the default lookup (used by integration tests
-// where the worker is spawned with a cwd that doesn't contain the manifest).
-// Must be an absolute path when set.
-const manifestPath = process.env.SKY_MANIFEST_PATH ?? `${process.cwd()}/sky-manifest.json`;
-const manifest = await import(manifestPath, { with: { type: 'json' } });
-
 // ---------------------------------------------------------------------------
 // Manifest handler metadata index
 // ---------------------------------------------------------------------------
@@ -25,19 +19,25 @@ interface HandlerMeta {
   middleware: MiddlewareEntry[];
 }
 
-// Index status, validate flag, and middleware chain per handler.
-// Extract descriptors come from ServiceRegistry (source of truth is the decorated source).
-const handlerMeta = new Map<string, HandlerMeta>();
+async function loadHandlerMeta(): Promise<Map<string, HandlerMeta>> {
+  // SKY_MANIFEST_PATH overrides the default lookup (used by integration tests
+  // where the worker is spawned with a cwd that doesn't contain the manifest).
+  // Must be an absolute path when set.
+  const manifestPath = process.env.SKY_MANIFEST_PATH ?? `${process.cwd()}/sky-manifest.json`;
+  const manifest = await import(manifestPath, { with: { type: 'json' } });
 
-for (const service of manifest.services) {
-  const serviceMiddleware: MiddlewareEntry[] = (service.middleware ?? []) as MiddlewareEntry[];
-  for (const handler of service.handlers) {
-    handlerMeta.set(`${service.name}.${handler.name}`, {
-      status: handler.status,
-      validate: handler.validate,
-      middleware: [...serviceMiddleware, ...((handler.middleware ?? []) as MiddlewareEntry[])],
-    });
+  const meta = new Map<string, HandlerMeta>();
+  for (const service of manifest.services) {
+    const serviceMiddleware: MiddlewareEntry[] = (service.middleware ?? []) as MiddlewareEntry[];
+    for (const handler of service.handlers) {
+      meta.set(`${service.name}.${handler.name}`, {
+        status: handler.status,
+        validate: handler.validate,
+        middleware: [...serviceMiddleware, ...((handler.middleware ?? []) as MiddlewareEntry[])],
+      });
+    }
   }
+  return meta;
 }
 
 // ---------------------------------------------------------------------------
@@ -57,6 +57,7 @@ export async function createDispatcher(
   registry: ServiceRegistry,
   middlewareMap: Map<string, SkyMiddleware> = new Map(),
 ): Promise<HandlerDispatcher> {
+  const handlerMeta = await loadHandlerMeta();
   return {
     start(socket: SkyWorkerSocket): () => void {
       let stopped = false;
@@ -65,7 +66,7 @@ export async function createDispatcher(
         for await (const invocation of socket.invocations()) {
           if (stopped) break;
 
-          handleInvocation(socket, registry, middlewareMap, invocation).catch((err: Error) => {
+          handleInvocation(socket, registry, middlewareMap, handlerMeta, invocation).catch((err: Error) => {
             console.error(`[sky/worker] unhandled error in ${invocation.handlerId}:`, err);
             socket.sendError(
               invocation.requestId,
@@ -90,6 +91,7 @@ async function handleInvocation(
   socket: SkyWorkerSocket,
   registry: ServiceRegistry,
   middlewareMap: Map<string, SkyMiddleware>,
+  handlerMeta: Map<string, HandlerMeta>,
   invocation: SkyInvocation,
 ): Promise<void> {
   const [serviceName, methodName] = invocation.handlerId.split(".");
@@ -165,9 +167,9 @@ async function handleInvocation(
 
   // Build middleware chain — native entries (CORS etc.) are hoisted to the gateway; skip them here.
   const chain: SkyMiddleware[] = meta.middleware
-    .filter(m => m.kind === "user")
-    .map(m => middlewareMap.get(m.name))
-    .filter((m): m is SkyMiddleware => m !== undefined);
+    .filter((m: MiddlewareEntry) => m.kind === "user")
+    .map((m: MiddlewareEntry) => middlewareMap.get(m.name))
+    .filter((m: SkyMiddleware | undefined): m is SkyMiddleware => m !== undefined);
 
   const ctx: MiddlewareContext = {
     invocation,

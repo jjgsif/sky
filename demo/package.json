@@ -2,8 +2,10 @@
   "name": "demo",
   "module": "index.ts",
   "devDependencies": {
-    "@bufbuild/protoc-gen-es": "^2.12.0",
     "@types/bun": "latest"
+  },
+  "scripts": {
+    "build": "sky build"
   },
   "peerDependencies": {
     "typescript": "^5"

@@ -1,0 +1,20 @@
+services:
+  valkey:
+    image: valkey/valkey:8-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "valkey-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  sky:
+    build:
+      context: ..
+      dockerfile: demo/Dockerfile
+    ports:
+      - "8080:8080"
+    depends_on:
+      valkey:
+        condition: service_healthy
