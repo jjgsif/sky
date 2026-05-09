@@ -94,7 +94,7 @@ let manifest: ManifestOutput;
 beforeAll(async () => {
     manifest = await assembleManifest(
         [FIXTURE],
-        path.join(import.meta.dir, "fixtures", "context-service-manifest.json"),
+        path.join(import.meta.dir, "fixtures", "sky-manifest.json"),
     );
 });
 
