@@ -1,4 +1,4 @@
-import { Service, Handler, Query, type ExtractContext } from "@sky/decorators";
+import { Service, Handler, Query, type ExtractContext } from "sky/decorators";
 
 const encoder = new TextEncoder();
 
@@ -7,9 +7,6 @@ const fibonacciExtract = { limit: Query("limit") } as const;
 
 @Service({ lifetime: "singleton" })
 class StreamService {
-  /**
-   * GET /stream/events?count=N — streams N NDJSON events.
-   */
   @Handler({
     method: "GET",
     path: "/stream/events",
@@ -26,9 +23,6 @@ class StreamService {
     };
   }
 
-  /**
-   * GET /stream/fibonacci?limit=N — streams Fibonacci numbers as NDJSON.
-   */
   @Handler({
     method: "GET",
     path: "/stream/fibonacci",

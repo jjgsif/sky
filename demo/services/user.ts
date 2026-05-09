@@ -1,4 +1,11 @@
-import { Service, Handler, Body, Param, Query, ZodBody } from "sky/decorators";
+import {
+  Service,
+  Handler,
+  Param,
+  Query,
+  ZodBody,
+  type ExtractContext,
+} from "sky/decorators";
 import { Response, HttpError } from "sky/runtime";
 import { z } from "zod";
 
@@ -26,8 +33,19 @@ interface User {
   createdAt: string;
 }
 
-type CreateUserInput = z.infer<typeof CreateUserSchema>;
-type UpdateUserInput = z.infer<typeof UpdateUserSchema>;
+// ── Extract descriptors ─────────────────────────────────
+
+const createExtract = { body: ZodBody(CreateUserSchema) } as const;
+const getExtract = { id: Param("id") } as const;
+const listExtract = {
+  page: Query("page"),
+  limit: Query("limit"),
+} as const;
+const updateExtract = {
+  id: Param("id"),
+  body: ZodBody(UpdateUserSchema),
+} as const;
+const deleteExtract = { id: Param("id") } as const;
 
 // ── Service ─────────────────────────────────────────────
 
@@ -40,9 +58,9 @@ class UserService {
   @Handler({
     method: "POST",
     path: "/users",
-    extract: [ZodBody(CreateUserSchema)],
+    extract: createExtract,
   })
-  async createUser(body: CreateUserInput) {
+  async createUser({ body }: ExtractContext<typeof createExtract>) {
     const id = String(UserService.nextId++);
 
     const user: User = {
@@ -61,9 +79,9 @@ class UserService {
   @Handler({
     method: "GET",
     path: "/users/:id",
-    extract: [Param("id")],
+    extract: getExtract,
   })
-  async getUser(id: string) {
+  async getUser({ id }: ExtractContext<typeof getExtract>) {
     const user = UserService.users.get(id);
 
     if (!user) {
@@ -76,9 +94,9 @@ class UserService {
   @Handler({
     method: "GET",
     path: "/users",
-    extract: [Query("page"), Query("limit")],
+    extract: listExtract,
   })
-  async listUsers(page?: string, limit?: string) {
+  async listUsers({ page, limit }: ExtractContext<typeof listExtract>) {
     const pageNum = parseInt(page ?? "1", 10);
     const limitNum = parseInt(limit ?? "10", 10);
 
@@ -97,9 +115,9 @@ class UserService {
   @Handler({
     method: "PUT",
     path: "/users/:id",
-    extract: [Param("id"), ZodBody(UpdateUserSchema)],
+    extract: updateExtract,
   })
-  async updateUser(id: string, body: UpdateUserInput) {
+  async updateUser({ id, body }: ExtractContext<typeof updateExtract>) {
     const user = UserService.users.get(id);
 
     if (!user) {
@@ -116,9 +134,9 @@ class UserService {
   @Handler({
     method: "DELETE",
     path: "/users/:id",
-    extract: [Param("id")],
+    extract: deleteExtract,
   })
-  async deleteUser(id: string) {
+  async deleteUser({ id }: ExtractContext<typeof deleteExtract>) {
     const existed = UserService.users.delete(id);
 
     if (!existed) {

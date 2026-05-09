@@ -14,6 +14,7 @@ level = "info"
 
 [worker]
 bun_path = "bun"
-worker_script = "./worker/src/index.ts"
+worker_script = "./demo/index.ts"
 worker_version = "0.1.0"
 pool_size = 10
+manifest_path = "./sky-manifest.json"

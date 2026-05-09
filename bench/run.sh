@@ -56,25 +56,25 @@ fi
 # ── Start gateway ─────────────────────────────────────────────────────────────
 start_gateway() {
     echo "==> Connecting to Gateway"
-    # echo "==> Starting gateway (config: $BENCH_CONFIG)..."
-    # "$GATEWAY_BIN" --config "$BENCH_CONFIG" &>/tmp/sky-bench-gateway.log &
-    # GATEWAY_PID=$!
+    echo "==> Starting gateway (config: $BENCH_CONFIG)..."
+    "$GATEWAY_BIN" --config "$BENCH_CONFIG" &>/tmp/sky-bench-gateway.log &
+    GATEWAY_PID=$!
 
-    # echo "==> Waiting for gateway..."
-    # for i in $(seq 1 "$READY_TIMEOUT"); do
-    #     if curl -sf -X POST "$READY_URL" \
-    #             -H "Content-Type: application/json" \
-    #             -d '{"name":"probe"}' >/dev/null 2>&1; then
-    #         echo "    Ready after ${i}s."
-    #         return
-    #     fi
-    #     if [ "$i" -eq "$READY_TIMEOUT" ]; then
-    #         echo "error: gateway not ready within ${READY_TIMEOUT}s" >&2
-    #         cat /tmp/sky-bench-gateway.log >&2
-    #         exit 1
-    #     fi
-    #     sleep 1
-    # done
+    echo "==> Waiting for gateway..."
+    for i in $(seq 1 "$READY_TIMEOUT"); do
+        if curl -sf -X POST "$READY_URL" \
+                -H "Content-Type: application/json" \
+                -d '{"name":"probe"}' >/dev/null 2>&1; then
+            echo "    Ready after ${i}s."
+            return
+        fi
+        if [ "$i" -eq "$READY_TIMEOUT" ]; then
+            echo "error: gateway not ready within ${READY_TIMEOUT}s" >&2
+            cat /tmp/sky-bench-gateway.log >&2
+            exit 1
+        fi
+        sleep 1
+    done
 }
 
 stop_gateway() {

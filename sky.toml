@@ -19,7 +19,7 @@ level = "info"
 # Path to the Bun binary. Can be a bare name (searched on PATH) or absolute path.
 bun_path = "bun"
 # Path to the worker entry script.
-worker_script = "./worker/src/index.ts"
+worker_script = "./demo/index.ts"
 # Number of worker processes. Increase to scale throughput across CPU cores.
 # pool_size = 1
 # Version string the worker reports via Health.
@@ -32,5 +32,7 @@ shutdown_grace = "5s"
 manifest_path = "./sky-manifest.json"
 
 [build]
-# Directories to scan for @Service/@Handler decorated classes
-sources = ["./worker/src/runtime/services"]
+# Directories to scan for @Service/@Handler decorated classes.
+# Pointed at the demo so that `sky build` from the project root produces
+# ./sky-manifest.json from the demo's services and config.
+sources = ["./demo/services", "./demo/config"]

@@ -8,7 +8,7 @@ const Handler = (options: HandlerOptions) => {
 
         const def: HandlerDefinition = {
             status: options.status ?? getDefaultStatus(options.method),
-            extract: options.extract ?? [],
+            extract: options.extract ?? {},
             method: options.method,
             path: options.path,
             validate: options.validate ?? true,

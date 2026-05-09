@@ -1,7 +1,7 @@
 {
   "version": "1",
-  "hash": "sha256:28e8d4ccf4e88722c8ae55ba39057b045472ceab1a3d76a29385736d679a0d92",
-  "emitted_at": "2026-04-30T01:36:19.300Z",
+  "hash": "sha256:4133a3067449c01fa96a04f61ea4393611099116f434cbaf590b7e14bdf4259e",
+  "emitted_at": "2026-05-08T13:34:40.693Z",
   "services": [
     {
       "name": "DatabaseClient",
@@ -35,17 +35,18 @@
           "path": "/",
           "status": 201,
           "validate": true,
+          "streaming": false,
           "extract": [
             {
+              "field": "body",
               "source": "body",
-              "position": 0,
               "schema": {
                 "$ref": "#/schemas/CreateUserInput"
               }
             },
             {
+              "field": "tenantId",
               "source": "header",
-              "position": 1,
               "name": "x-tenant-id"
             }
           ],
@@ -59,10 +60,11 @@
           "path": "/:id",
           "status": 200,
           "validate": true,
+          "streaming": false,
           "extract": [
             {
+              "field": "id",
               "source": "param",
-              "position": 0,
               "name": "id"
             }
           ],
@@ -76,15 +78,16 @@
           "path": "/",
           "status": 200,
           "validate": true,
+          "streaming": false,
           "extract": [
             {
+              "field": "page",
               "source": "query",
-              "position": 0,
               "name": "page"
             },
             {
+              "field": "limit",
               "source": "query",
-              "position": 1,
               "name": "limit"
             }
           ],
@@ -101,15 +104,16 @@
           "path": "/:id",
           "status": 200,
           "validate": true,
+          "streaming": false,
           "extract": [
             {
+              "field": "id",
               "source": "param",
-              "position": 0,
               "name": "id"
             },
             {
+              "field": "body",
               "source": "body",
-              "position": 1,
               "schema": {
                 "$ref": "#/schemas/UpdateUserInput"
               }
@@ -125,10 +129,11 @@
           "path": "/:id",
           "status": 204,
           "validate": false,
+          "streaming": false,
           "extract": [
             {
+              "field": "id",
               "source": "param",
-              "position": 0,
               "name": "id"
             }
           ]
@@ -151,6 +156,7 @@
           "path": "/health",
           "status": 200,
           "validate": true,
+          "streaming": false,
           "extract": [],
           "response": {
             "type": "object",

@@ -1,5 +1,5 @@
 import { describe, test, expect, beforeAll } from "bun:test";
-import { assembleManifest, type ManifestOutput } from "@emitter";
+import { assembleManifest, type ManifestOutput } from "@sky/emitter";
 import path from "path";
 
 const APP_DIR = path.join(import.meta.dir, "fixtures", "app");
@@ -94,12 +94,11 @@ describe("handlers", () => {
         const user = manifest.services.find(s => s.name === "UserService");
         const handler = user!.handlers.find(h => h.name === "createUser");
 
+        const byField = Object.fromEntries(handler!.extract.map(e => [e.field, e]));
         expect(handler!.extract.length).toBe(2);
-        expect(handler!.extract[0].source).toBe("body");
-        expect(handler!.extract[0].position).toBe(0);
-        expect(handler!.extract[1].source).toBe("header");
-        expect(handler!.extract[1].name).toBe("x-tenant-id");
-        expect(handler!.extract[1].position).toBe(1);
+        expect(byField["body"]!.source).toBe("body");
+        expect(byField["tenantId"]!.source).toBe("header");
+        expect(byField["tenantId"]!.name).toBe("x-tenant-id");
     });
 
     test("getUser has Param extract", () => {
@@ -107,6 +106,7 @@ describe("handlers", () => {
         const handler = user!.handlers.find(h => h.name === "getUser");
 
         expect(handler!.extract.length).toBe(1);
+        expect(handler!.extract[0].field).toBe("id");
         expect(handler!.extract[0].source).toBe("param");
         expect(handler!.extract[0].name).toBe("id");
     });
@@ -115,23 +115,23 @@ describe("handlers", () => {
         const user = manifest.services.find(s => s.name === "UserService");
         const handler = user!.handlers.find(h => h.name === "listUsers");
 
+        const byField = Object.fromEntries(handler!.extract.map(e => [e.field, e]));
         expect(handler!.extract.length).toBe(2);
-        expect(handler!.extract[0].source).toBe("query");
-        expect(handler!.extract[0].name).toBe("page");
-        expect(handler!.extract[1].source).toBe("query");
-        expect(handler!.extract[1].name).toBe("limit");
+        expect(byField["page"]!.source).toBe("query");
+        expect(byField["page"]!.name).toBe("page");
+        expect(byField["limit"]!.source).toBe("query");
+        expect(byField["limit"]!.name).toBe("limit");
     });
 
     test("updateUser has Param and Body extracts", () => {
         const user = manifest.services.find(s => s.name === "UserService");
         const handler = user!.handlers.find(h => h.name === "updateUser");
 
+        const byField = Object.fromEntries(handler!.extract.map(e => [e.field, e]));
         expect(handler!.extract.length).toBe(2);
-        expect(handler!.extract[0].source).toBe("param");
-        expect(handler!.extract[0].name).toBe("id");
-        expect(handler!.extract[0].position).toBe(0);
-        expect(handler!.extract[1].source).toBe("body");
-        expect(handler!.extract[1].position).toBe(1);
+        expect(byField["id"]!.source).toBe("param");
+        expect(byField["id"]!.name).toBe("id");
+        expect(byField["body"]!.source).toBe("body");
     });
 
     test("deleteUser has validate false", () => {

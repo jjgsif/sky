@@ -1,4 +1,4 @@
-import { Service, Handler } from "@decorators";
+import { Service, Handler } from "@sky/decorators";
 
 @Service({ lifetime: "singleton" })
 export class HealthService {

@@ -180,11 +180,11 @@ function unionToSchema(type: ts.UnionType, checker: ts.TypeChecker, registry?: S
 
     // Single type remaining
     if (effective.length === 1 && !addNull) {
-        return effective[0];
+        return effective[0]!;
     }
 
     if (effective.length === 1 && addNull) {
-        const inner = effective[0];
+        const inner = effective[0]!;
         if (typeof inner.type === "string") {
             return { ...inner, type: [inner.type, "null"] };
         }

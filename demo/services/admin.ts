@@ -1,5 +1,14 @@
-import { Service, Handler, Header, Query, Group } from "sky/decorators";
+import { Service, Handler, Header, Query, Group, type ExtractContext } from "sky/decorators";
 import { HttpError } from "sky/runtime";
+
+const listExtract = {
+  token: Header("x-admin-token"),
+  page: Query("page"),
+} as const;
+
+const statsExtract = {
+  token: Header("x-admin-token"),
+} as const;
 
 @Service({ lifetime: "scoped" })
 @Group({
@@ -9,10 +18,9 @@ class AdminService {
   @Handler({
     method: "GET",
     path: "/users",
-    extract: [Header("x-admin-token"), Query("page")],
+    extract: listExtract,
   })
-  async listAdminUsers(token: string, page?: string) {
-    // Simple token check for the demo
+  async listAdminUsers({ token, page }: ExtractContext<typeof listExtract>) {
     if (!token || token !== "sky-admin-secret") {
       throw new HttpError(401, "Invalid admin token");
     }
@@ -29,9 +37,9 @@ class AdminService {
   @Handler({
     method: "GET",
     path: "/stats",
-    extract: [Header("x-admin-token")],
+    extract: statsExtract,
   })
-  async getStats(token: string) {
+  async getStats({ token }: ExtractContext<typeof statsExtract>) {
     if (!token || token !== "sky-admin-secret") {
       throw new HttpError(401, "Invalid admin token");
     }

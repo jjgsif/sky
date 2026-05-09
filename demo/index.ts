@@ -17,6 +17,8 @@ import { startServer, logger } from "sky/runtime";
 import { UserService } from "./services/user";
 import { HealthService } from "./services/health";
 import { AdminService } from "./services/admin";
+import { HelloService } from "./services/hello";
+import { StreamService } from "./services/stream";
 
 async function main() {
   const log = logger.child({ component: "demo" });
@@ -25,7 +27,7 @@ async function main() {
     workerVersion: "0.1.0",
     logger,
     gracePeriodDefaultMs: 3000,
-    services: [UserService, HealthService, AdminService],
+    services: [UserService, HealthService, AdminService, HelloService, StreamService],
   });
 
   log.info(

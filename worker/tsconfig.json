@@ -8,16 +8,15 @@
         "esModuleInterop": true,
         "isolatedModules": true,
         "verbatimModuleSyntax": true,
-        "baseUrl": ".",
         "paths": {
-            "@gen/*": ["./gen/*"],
             "@sky/decorators": ["./src/decorators"],
             "@sky/emitter": ["./src/emitter"],
             "@sky/emitter/*": ["./src/emitter/*"],
+            "@sky/runtime": ["./src/runtime"],
             "@sky/runtime/*": ["./src/runtime/*"],
             "@sky/transport": ["./src/transport"]
         },
         "types": ["node", "bun"]
     },
-    "include": ["src/**/*", "test/**/*", "index.ts"]
+    "include": ["src/**/*", "test/**/*"]
 }

@@ -1,4 +1,4 @@
-import { SkyWorkerSocket, type SkyInvocation } from "@sky/transport";
+import { SkyWorkerSocket, type SkyInvocation } from "../transport";
 import { ServiceRegistry } from "./service-registry.js";
 import type { SkyMiddleware, SkyResponse, SkyBody, MiddlewareContext } from "./middleware/types";
 import { HttpError } from "./errors";
@@ -93,6 +93,14 @@ async function handleInvocation(
   invocation: SkyInvocation,
 ): Promise<void> {
   const [serviceName, methodName] = invocation.handlerId.split(".");
+  if (!serviceName || !methodName) {
+    socket.sendError(
+      invocation.requestId,
+      "HANDLER_NOT_FOUND",
+      `Invalid handler id: ${invocation.handlerId}`,
+    );
+    return;
+  }
 
   const serviceInfo = registry.getServiceInfoByClassName(serviceName);
   if (!serviceInfo) {
@@ -122,7 +130,16 @@ async function handleInvocation(
   // singletons resolve from root container automatically
   const scope = registry.container.createScope();
   const service = await scope.get(serviceInfo.cls) as Record<string, Function>;
-  const handler = service[methodName].bind(service);
+  const method = service[methodName];
+  if (typeof method !== "function") {
+    socket.sendError(
+      invocation.requestId,
+      "HANDLER_NOT_FOUND",
+      `${serviceName} has no method ${methodName}`,
+    );
+    return;
+  }
+  const handler = method.bind(service);
 
   // Build the single input object passed to the handler. Keys mirror the
   // `extract` record exactly; values come from the live invocation.
@@ -207,8 +224,9 @@ async function runMiddlewareChain(
   ctx: MiddlewareContext,
   leaf: () => Promise<SkyResponse>,
 ): Promise<SkyResponse> {
-  if (chain.length === 0) return leaf();
-  return chain[0].handle(ctx, () => runMiddlewareChain(chain.slice(1), ctx, leaf));
+  const [first, ...rest] = chain;
+  if (!first) return leaf();
+  return first.handle(ctx, () => runMiddlewareChain(rest, ctx, leaf));
 }
 
 // ---------------------------------------------------------------------------

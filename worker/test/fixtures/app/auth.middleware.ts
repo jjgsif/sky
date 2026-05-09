@@ -1,4 +1,4 @@
-import { Service, Middleware } from "../../../src/decorators";
+import { Service, Middleware } from "@sky/decorators";
 
 @Service({ lifetime: "singleton", dependencies: [] })
 @Middleware({ global: true, order: 1 })

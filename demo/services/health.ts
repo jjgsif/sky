@@ -7,7 +7,6 @@ class HealthService {
   @Handler({
     method: "GET",
     path: "/health",
-    extract: [],
   })
   async check() {
     return {

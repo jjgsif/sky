@@ -21,7 +21,7 @@ async function get(
   path: string,
   headers: Record<string, string> = {},
 ): Promise<{ status: number; body: any }> {
-  const res: Response = await fetch(`${BASE}${path}`, { headers });
+  const res = await fetch(`${BASE}${path}`, { headers });
   return { status: res.status, body: await json(res) };
 }
 
@@ -50,11 +50,11 @@ async function put(
 }
 
 async function del(path: string): Promise<{ status: number; body: any }> {
-  const res: Response = await fetch(`${BASE}${path}`, { method: "DELETE" });
+  const res = await fetch(`${BASE}${path}`, { method: "DELETE" });
   return { status: res.status, body: await json(res) };
 }
 
-async function json(response: Response): Promise<any> {
+async function json(response: globalThis.Response): Promise<any> {
   const text = await response.text();
   try {
     return JSON.parse(text);

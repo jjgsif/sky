@@ -1,4 +1,4 @@
-import type { SkyInvocation } from "@sky/transport";
+import type { SkyInvocation } from "../../transport";
 
 export interface NativeMiddlewareDescriptor {
     kind: "native";

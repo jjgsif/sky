@@ -10,14 +10,15 @@ function encodeHeader(h: FrameHeader): Buffer {
 }
  
 function decodeHeader(buf: Buffer, offset: number): FrameHeader {
-  if (buf[offset] !== PROTOCOL_VERSION) {  // ← was buf[0], should be buf[offset]
+  const version = buf.readUInt8(offset);
+  if (version !== PROTOCOL_VERSION) {
     throw new Error(
-      `Sky transport: version mismatch — expected ${PROTOCOL_VERSION}, got ${buf[offset]}`
+      `Sky transport: version mismatch — expected ${PROTOCOL_VERSION}, got ${version}`,
     );
   }
   return {
-    version:    buf[offset],
-    frameType:  buf[offset + 1],
+    version,
+    frameType:  buf.readUInt8(offset + 1),
     requestId:  buf.readUInt32BE(offset + 2),
     payloadLen: buf.readUInt32BE(offset + 6),
   };

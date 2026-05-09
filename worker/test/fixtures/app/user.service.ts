@@ -1,6 +1,38 @@
-import { Service, Handler, Group, Body, Header, Param, Query } from "@decorators";
+import {
+    Service,
+    Handler,
+    Group,
+    Body,
+    Header,
+    Param,
+    Query,
+    type ExtractContext,
+} from "@sky/decorators";
 import { DatabaseClient } from "./database";
 import type { CreateUserInput, UserResponse, UpdateUserInput } from "./types";
+
+const createExtract = {
+    body: Body<CreateUserInput>(),
+    tenantId: Header("x-tenant-id"),
+} as const;
+
+const getExtract = {
+    id: Param("id"),
+} as const;
+
+const listExtract = {
+    page: Query("page"),
+    limit: Query("limit"),
+} as const;
+
+const updateExtract = {
+    id: Param("id"),
+    body: Body<UpdateUserInput>(),
+} as const;
+
+const deleteExtract = {
+    id: Param("id"),
+} as const;
 
 @Service({
     lifetime: "scoped",
@@ -13,36 +45,44 @@ export class UserService {
         method: "POST",
         path: "/",
         status: 201,
-        extract: [Body(), Header("x-tenant-id")],
+        extract: createExtract,
     })
-    async createUser(input: CreateUserInput, tenantId: string): Promise<UserResponse> {
+    async createUser(
+        _input: ExtractContext<typeof createExtract>,
+    ): Promise<UserResponse> {
         return {} as UserResponse;
     }
 
     @Handler({
         method: "GET",
         path: "/:id",
-        extract: [Param("id")],
+        extract: getExtract,
     })
-    async getUser(id: string): Promise<UserResponse> {
+    async getUser(
+        _input: ExtractContext<typeof getExtract>,
+    ): Promise<UserResponse> {
         return {} as UserResponse;
     }
 
     @Handler({
         method: "GET",
         path: "/",
-        extract: [Query("page"), Query("limit")],
+        extract: listExtract,
     })
-    async listUsers(page: number, limit: number): Promise<UserResponse[]> {
+    async listUsers(
+        _input: ExtractContext<typeof listExtract>,
+    ): Promise<UserResponse[]> {
         return [];
     }
 
     @Handler({
         method: "PUT",
         path: "/:id",
-        extract: [Param("id"), Body()],
+        extract: updateExtract,
     })
-    async updateUser(id: string, input: UpdateUserInput): Promise<UserResponse> {
+    async updateUser(
+        _input: ExtractContext<typeof updateExtract>,
+    ): Promise<UserResponse> {
         return {} as UserResponse;
     }
 
@@ -51,7 +91,9 @@ export class UserService {
         path: "/:id",
         status: 204,
         validate: false,
-        extract: [Param("id")],
+        extract: deleteExtract,
     })
-    async deleteUser(id: string): Promise<void> {}
+    async deleteUser(
+        _input: ExtractContext<typeof deleteExtract>,
+    ): Promise<void> {}
 }

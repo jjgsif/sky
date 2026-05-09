@@ -16,7 +16,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 fn worker_script_path() -> PathBuf {
-    workspace_root().join("worker").join("src").join("index.ts")
+    workspace_root().join("demo").join("index.ts")
 }
 
 fn workspace_root() -> PathBuf {

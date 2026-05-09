@@ -1,7 +1,7 @@
 import { describe, test, expect } from "bun:test";
-import { createProgram, findTypeDeclarations } from "../src/emitter/walker";
-import { typeToJsonSchema, type JsonSchema } from "../src/emitter/schema";
-import { SchemaRegistry } from "../src/emitter/registry";
+import { createProgram, findTypeDeclarations } from "@sky/emitter/walker";
+import { typeToJsonSchema, type JsonSchema } from "@sky/emitter/schema";
+import { SchemaRegistry } from "@sky/emitter/registry";
 import path from "path";
 
 const FIXTURES = path.join(import.meta.dir, "fixtures");

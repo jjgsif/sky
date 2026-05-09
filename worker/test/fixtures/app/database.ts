@@ -1,4 +1,4 @@
-import { Service } from "@decorators";
+import { Service } from "@sky/decorators";
 
 @Service({ lifetime: "singleton" })
 export class DatabaseClient {

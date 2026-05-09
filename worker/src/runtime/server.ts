@@ -3,7 +3,7 @@
 import * as fs from "node:fs";
 import type { Logger } from "./logger";
 import { Container } from "@blue.ts/di";
-import { SkyWorkerSocket } from "@sky/transport";
+import { SkyWorkerSocket } from "../transport";
 import { ServiceRegistry } from "./service-registry";
 import { createDispatcher } from "./dispatcher";
 import type { SkyMiddleware } from "./middleware/types";

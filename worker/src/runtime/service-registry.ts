@@ -13,8 +13,8 @@
  */
 
 import { Container, type Identifier } from "@blue.ts/di";
-import { ServiceMap } from "@sky/decorators";
-import type { ServiceRegistration, HandlerDefinition, ExtractDescriptor } from "sky/decorators";
+import { ServiceMap } from "../decorators";
+import type { ServiceRegistration, HandlerDefinition, ExtractDescriptor } from "../decorators";
 
 // ── Types ───────────────────────────────────────────────
 
@@ -57,7 +57,9 @@ export class ServiceRegistry {
       lifetime: registration.lifetime,
       factory: async (r) => {
         const deps = await Promise.all(
-          registration.dependencies.map((dep) => r.get(dep as Identifier<any>))
+          registration.dependencies.map((dep: string | Function | symbol) =>
+            r.get(dep as Identifier<any>),
+          )
         );
         return new cls(...deps);
       },
