@@ -13,6 +13,7 @@
 
 use serde::{Deserialize, Serialize};
 use sky_runtime::ConfigError;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -74,6 +75,11 @@ pub struct WorkerConfig {
     /// Default: 1 (single worker, backward compatible).
     #[serde(default = "default_pool_size")]
     pub pool_size: usize,
+
+    /// Additional environment variables injected into every worker process.
+    /// The gateway uses this to propagate `SKY_AUTH_SECRET` from `[auth].jwt_secret`.
+    #[serde(default)]
+    pub env: HashMap<String, String>,
 }
 
 impl WorkerConfig {
@@ -98,6 +104,7 @@ impl WorkerConfig {
             failure_window: default_failure_window(),
             healthy_reset_duration: default_healthy_reset_duration(),
             pool_size: default_pool_size(),
+            env: HashMap::new(),
         }
     }
 

@@ -500,8 +500,6 @@ mod tests {
         assert!(registry.is_empty());
     }
 
-    #[test]
-    fn errors_on_unresolved_ref() {
 #[test]
 fn errors_on_unresolved_ref() {
     let manifest = Manifest {
@@ -539,7 +537,6 @@ fn errors_on_unresolved_ref() {
     let err = SchemaRegistry::from_manifest(&manifest).unwrap_err();
     assert!(matches!(err, SchemaError::UnresolvedRef { .. }));
 }
-    }
 
     // ── Validation ──────────────────────────────
 

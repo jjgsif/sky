@@ -12,8 +12,10 @@
 //! as-is (body, params, query, headers) and the worker's dispatcher handles
 //! field extraction based on the manifest.
 
+use crate::auth::{AuthOutcome, AuthValidator};
 use crate::cors::{apply_cors_headers, CorsRegistry};
 use crate::manifest::Manifest;
+use crate::rate_limit::{RateLimitOutcome, RateLimiter};
 use crate::validation::{HandlerKey, SchemaRegistry, ValidationErrorResponse};
 use axum::body::{Body, Bytes};
 use axum::extract::{MatchedPath, Path, Query, State};
@@ -29,7 +31,6 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{debug, error, warn};
-use crate::rate_limit::{RateLimiter, RateLimitOutcome};
 // ── Shared state ──────────────────────────────────────────────────────────────
 
 /// Application state shared across all route handlers.
@@ -39,6 +40,7 @@ pub struct RouterState {
     pub schema_registry: Arc<SchemaRegistry>,
     pub cors: Arc<CorsRegistry>,
     pub rate_limit: Arc<RateLimiter>,
+    pub auth: Arc<AuthValidator>,
     /// Worker pool. `None` in validation-only tests that don't need a real worker.
     pub pool: Option<Arc<WorkerPool>>,
 }
@@ -218,6 +220,16 @@ async fn generic_handler(
         return make_rate_limited_response(retry_after_secs);
     }
 
+    // ── Authentication ───────────────────────────────────────────────────────
+
+    let verified_claims = match state.auth.check(&route.handler_id, &headers) {
+        AuthOutcome::Allowed { claims } => Some(claims),
+        AuthOutcome::NotRequired => None,
+        AuthOutcome::Denied { status, code, message } => {
+            return make_error_response(status, code, &message);
+        }
+    };
+
     // ── Worker connection check ──────────────────────────────────────────────
 
     let connection: Arc<WorkerSocket> = match &state.pool {
@@ -234,10 +246,14 @@ async fn generic_handler(
 
     // ── Build INVOKE payload ─────────────────────────────────────────────────
 
-    let header_map: HashMap<String, String> = headers
+    let mut header_map: HashMap<String, String> = headers
         .iter()
         .filter_map(|(k, v)| v.to_str().ok().map(|s| (k.to_string(), s.to_string())))
         .collect();
+
+    if let Some(claims) = verified_claims {
+        header_map.insert("x-sky-claims".to_string(), claims.to_string());
+    }
 
     let payload = InvokePayload {
         handler_id: &route.handler_id,
@@ -377,7 +393,7 @@ fn build_streaming_response(
     // typical LAN speeds; larger values trade memory for fewer wakeups.
     let (tx, rx) = mpsc::channel::<Result<Bytes, std::io::Error>>(8);
 
-    let drainer_request_id = request_id.clone();
+    let drainer_request_id = *request_id;
     let drainer_handler_id = handler_id.to_string();
     tokio::spawn(async move {
         loop {
@@ -546,10 +562,12 @@ mod tests {
         let schema_registry = SchemaRegistry::from_manifest(&manifest).unwrap();
         let cors_registry = CorsRegistry::from_manifest(&manifest);
         let rate_limiter = RateLimiter::from_manifest(&manifest);
+        let auth = AuthValidator::from_manifest(&manifest, "").unwrap();
         RouterState {
             manifest: Arc::new(manifest),
             schema_registry: Arc::new(schema_registry),
             cors: Arc::new(cors_registry),
+            auth: Arc::new(auth),
             rate_limit: Arc::new(rate_limiter),
             pool: None, // no worker needed for routing / validation tests
         }
@@ -774,5 +792,177 @@ mod tests {
         let state = test_router_state(&test_manifest());
         let routes = state.manifest.routes();
         assert_eq!(routes.len(), 6);
+    }
+
+    // ── Auth integration ─────────────────────────────────────────────────────
+
+    const TEST_JWT_SECRET: &str = "router-test-secret";
+
+    fn test_router_state_with_secret(manifest_json: &str, secret: &str) -> RouterState {
+        let manifest = Manifest::from_json(manifest_json).unwrap();
+        let schema_registry = SchemaRegistry::from_manifest(&manifest).unwrap();
+        let cors_registry = CorsRegistry::from_manifest(&manifest);
+        let rate_limiter = RateLimiter::from_manifest(&manifest);
+        let auth = AuthValidator::from_manifest(&manifest, secret).unwrap();
+        RouterState {
+            manifest: Arc::new(manifest),
+            schema_registry: Arc::new(schema_registry),
+            cors: Arc::new(cors_registry),
+            auth: Arc::new(auth),
+            rate_limit: Arc::new(rate_limiter),
+            pool: None,
+        }
+    }
+
+    fn auth_manifest() -> String {
+        serde_json::json!({
+            "version": "1", "hash": "", "emitted_at": "",
+            "services": [{
+                "name": "profileService",
+                "className": "ProfileService",
+                "lifetime": "singleton",
+                "dependencies": [],
+                "handlers": [
+                    {
+                        "name": "getMe",
+                        "method": "GET",
+                        "path": "/me",
+                        "status": 200,
+                        "validate": false,
+                        "extract": [],
+                        "middleware": [{ "kind": "native", "name": "auth", "config": {} }]
+                    },
+                    {
+                        "name": "getPublic",
+                        "method": "GET",
+                        "path": "/public",
+                        "status": 200,
+                        "validate": false,
+                        "extract": []
+                    }
+                ]
+            }],
+            "middleware": [], "schemas": {}
+        })
+        .to_string()
+    }
+
+    fn mint_token(secret: &str, exp_offset_secs: i64) -> String {
+        use jsonwebtoken::{encode, EncodingKey, Header};
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+        let claims = serde_json::json!({ "sub": "test-user", "exp": now + exp_offset_secs });
+        encode(
+            &Header::default(),
+            &claims,
+            &EncodingKey::from_secret(secret.as_bytes()),
+        )
+        .unwrap()
+    }
+
+    #[tokio::test]
+    async fn protected_route_without_token_returns_401() {
+        let state = test_router_state_with_secret(&auth_manifest(), TEST_JWT_SECRET);
+        let router = build_manifest_router(state);
+
+        let req = Request::builder()
+            .uri("/me")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = router.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+        let body = axum::body::to_bytes(resp.into_body(), 10_000).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["code"], "jwt_missing");
+    }
+
+    #[tokio::test]
+    async fn protected_route_with_invalid_token_returns_401() {
+        let state = test_router_state_with_secret(&auth_manifest(), TEST_JWT_SECRET);
+        let router = build_manifest_router(state);
+
+        let req = Request::builder()
+            .uri("/me")
+            .header("authorization", "Bearer not.a.real.token")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = router.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+        let body = axum::body::to_bytes(resp.into_body(), 10_000).await.unwrap();
+        let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(json["code"], "jwt_invalid");
+    }
+
+    #[tokio::test]
+    async fn protected_route_with_expired_token_returns_401() {
+        let state = test_router_state_with_secret(&auth_manifest(), TEST_JWT_SECRET);
+        let router = build_manifest_router(state);
+        let token = mint_token(TEST_JWT_SECRET, -86400 * 100);
+
+        let req = Request::builder()
+            .uri("/me")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = router.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn protected_route_with_valid_token_passes_auth_reaches_worker_check() {
+        // Auth passes → hits the no-pool check → 503 (not 401/403).
+        // This confirms the auth layer is transparent to correctly-authed requests.
+        let state = test_router_state_with_secret(&auth_manifest(), TEST_JWT_SECRET);
+        let router = build_manifest_router(state);
+        let token = mint_token(TEST_JWT_SECRET, 3600);
+
+        let req = Request::builder()
+            .uri("/me")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = router.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn unprotected_route_skips_auth_reaches_worker_check() {
+        let state = test_router_state_with_secret(&auth_manifest(), TEST_JWT_SECRET);
+        let router = build_manifest_router(state);
+
+        let req = Request::builder()
+            .uri("/public")
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = router.oneshot(req).await.unwrap();
+        // No 401 — went straight to the no-pool 503.
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn protected_route_with_wrong_secret_token_returns_401() {
+        let state = test_router_state_with_secret(&auth_manifest(), TEST_JWT_SECRET);
+        let router = build_manifest_router(state);
+        // Token signed with a different secret.
+        let token = mint_token("wrong-secret", 3600);
+
+        let req = Request::builder()
+            .uri("/me")
+            .header("authorization", format!("Bearer {token}"))
+            .body(Body::empty())
+            .unwrap();
+
+        let resp = router.oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
     }
 }

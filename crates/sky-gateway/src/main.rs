@@ -4,13 +4,15 @@
 //! serves HTTP requests via axum. Forwards incoming HTTP requests to
 //! the worker over the Sky framing protocol.
 
+mod auth;
 mod config;
 mod cors;
 mod manifest;
-mod validation;
-mod router;
 mod rate_limit;
+mod router;
+mod validation;
 
+use crate::auth::AuthValidator;
 use crate::config::{GatewayConfig, LogFormat};
 use crate::cors::CorsRegistry;
 use crate::manifest::Manifest;
@@ -63,8 +65,14 @@ async fn main() -> Result<()> {
         "sky-gateway starting",
     );
 
-    // Start worker pool. If any worker fails readiness, exit immediately.
-    let pool = WorkerPool::new(config.worker.clone())
+    // Start worker pool. Propagate auth secret to workers if configured.
+    let mut worker_config = config.worker.clone();
+    if !config.auth.jwt_secret.is_empty() {
+        worker_config
+            .env
+            .insert("SKY_AUTH_SECRET".to_string(), config.auth.jwt_secret.clone());
+    }
+    let pool = WorkerPool::new(worker_config)
         .await
         .context("failed to start worker pool")?;
     let pool = Arc::new(pool);
@@ -79,6 +87,11 @@ async fn main() -> Result<()> {
     );
 
     let cors_registry = Arc::new(CorsRegistry::from_manifest(&manifest));
+
+    let auth_validator = Arc::new(
+        AuthValidator::from_manifest(&manifest, &config.auth.jwt_secret)
+            .map_err(|e| anyhow::anyhow!("{e}"))?,
+    );
 
     let rate_limit_registry = Arc::new(match &config.rate_limit.redis_url {
         Some(url) => {
@@ -104,6 +117,7 @@ async fn main() -> Result<()> {
         manifest: manifest.clone(),
         schema_registry,
         cors: cors_registry,
+        auth: auth_validator,
         rate_limit: rate_limit_registry,
         pool: Some(pool.clone()),
     });

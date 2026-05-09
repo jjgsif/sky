@@ -1,5 +1,6 @@
 export * from "./dispatcher";
 export * from "./errors";
+export * from "./jwt";
 export * from "./logger";
 export * from "./middleware";
 export * from "./response";

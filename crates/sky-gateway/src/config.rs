@@ -33,6 +33,45 @@ use std::path::PathBuf;
 use std::time::Duration;
 use thiserror::Error;
 
+/// JWT authentication configuration.
+///
+/// Set `jwt_secret` to a long random string to enable gateway-level JWT
+/// verification. Leave it empty (the default) to disable auth entirely.
+/// Routes decorated with `requireAuth()` will fail at gateway startup if
+/// no secret is configured.
+///
+/// ```toml
+/// [auth]
+/// jwt_secret = "change-me-use-a-long-random-string"
+/// token_ttl  = "24h"
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AuthConfig {
+    /// HMAC-SHA256 secret shared with workers for JWT signing and verification.
+    /// Injected into worker processes as `SKY_AUTH_SECRET`.
+    #[serde(default)]
+    pub jwt_secret: String,
+
+    /// Default token lifetime used by the worker's `issueToken()` helper.
+    /// The gateway enforces expiry on every verified token regardless of this setting.
+    /// Default: 24 hours.
+    #[serde(with = "humantime_serde", default = "default_token_ttl")]
+    pub token_ttl: Duration,
+}
+
+impl Default for AuthConfig {
+    fn default() -> Self {
+        Self {
+            jwt_secret: String::new(),
+            token_ttl: default_token_ttl(),
+        }
+    }
+}
+
+fn default_token_ttl() -> Duration {
+    Duration::from_secs(86400) // 24h
+}
+
 /// Top-level configuration loaded from a sky.toml file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayConfig {
@@ -50,6 +89,10 @@ pub struct GatewayConfig {
     /// Rate-limit backend configuration. Defaults to in-process tracking.
     #[serde(default)]
     pub rate_limit: RateLimitBackendConfig,
+
+    /// JWT authentication configuration. Defaults to disabled (empty secret).
+    #[serde(default)]
+    pub auth: AuthConfig,
 
     /// Path to the manifest file produced by `sky build`.
     /// Defaults to ./sky-manifest.json.

@@ -36,6 +36,7 @@ futures = { workspace = true }
 dashmap = { workspace = true }
 fred = { workspace = true }
 jsonschema = { workspace = true }
+jsonwebtoken = { workspace = true }
 socket2 = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }

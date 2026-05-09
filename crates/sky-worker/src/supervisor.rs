@@ -103,13 +103,15 @@ impl Supervisor {
             async move {
                 monitor_loop(
                     child,
-                    listener,
-                    connection,
-                    shutdown_token,
-                    config,
                     restart_policy,
-                    worker_id,
-                    &pool_name,
+                    MonitorInit {
+                        config,
+                        connection,
+                        listener,
+                        cancel_token: shutdown_token,
+                        worker_id,
+                        pool_name,
+                    }
                 )
                 .await;
             }
@@ -175,19 +177,23 @@ fn spawn_worker(
     // worker resolves to the same root where sky-manifest.json lives.
     // Bun resolves tsconfig paths relative to the entry file, not cwd,
     // so @sky/* aliases work regardless of working directory.
-    let child = Command::new(&config.bun_path)
-        .arg("run")
+    let mut cmd = Command::new(&config.bun_path);
+    cmd.arg("run")
         .arg(&config.worker_script)
         .env("SKY_WORKER_VERSION", &config.worker_version)
         .env("SKY_WORKER_ID", worker_id)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .spawn()
-        .map_err(|e| WorkerError::Unreachable {
-            pool: pool_name.to_string(),
-            reason: format!("failed to spawn worker: {e}"),
-        })?;
+        .kill_on_drop(true);
+
+    for (k, v) in &config.env {
+        cmd.env(k, v);
+    }
+
+    let child = cmd.spawn().map_err(|e| WorkerError::Unreachable {
+        pool: pool_name.to_string(),
+        reason: format!("failed to spawn worker: {e}"),
+    })?;
     Ok(child)
 }
 
@@ -364,72 +370,76 @@ async fn spawn_and_ready(
     Ok((child, socket))
 }
 
-// ── Monitor loop ──────────────────────────────────────────────────────────────
-
-async fn monitor_loop(
-    mut child: Child,
+pub struct MonitorInit {
     listener: SkyListener,
     connection: Arc<ArcSwap<WorkerSocket>>,
     cancel_token: CancellationToken,
     config: WorkerConfig,
-    mut restart_policy: RestartPolicy,
     worker_id: String,
-    pool_name: &str,
+    pool_name: String,
+}
+
+// ── Monitor loop ──────────────────────────────────────────────────────────────
+
+async fn monitor_loop(
+    mut child: Child,
+    mut restart_policy: RestartPolicy,
+    init: MonitorInit
 ) {
     let mut worker_started_at = Instant::now();
 
     loop {
         tokio::select! {
             _exit = child.wait() => {
-                if cancel_token.is_cancelled() {
-                    info!(pool = %pool_name, "worker exited after commanded shutdown");
+                if init.cancel_token.is_cancelled() {
+                    info!(pool = %init.pool_name, "worker exited after commanded shutdown");
                     break;
                 }
 
                 let ran_for = Instant::now() - worker_started_at;
-                if ran_for >= config.healthy_reset_duration {
+                if ran_for >= init.config.healthy_reset_duration {
                     restart_policy.record_healthy_run();
                 }
 
                 match restart_policy.record_failure(Instant::now()) {
                     FailureOutcome::Permanent => {
-                        warn!(pool = %pool_name, "crash-loop limit reached; giving up");
+                        warn!(pool = %init.pool_name, "crash-loop limit reached; giving up");
                         break;
                     }
                     FailureOutcome::Backoff(delay) => {
-                        info!(pool = %pool_name, delay = ?delay, "restarting after backoff");
+                        info!(pool = %init.pool_name, delay = ?delay, "restarting after backoff");
                         tokio::select! {
                             _ = sleep(delay) => {}
-                            _ = cancel_token.cancelled() => break,
+                            _ = init.cancel_token.cancelled() => break,
                         }
 
-                        match spawn_and_ready(&config, &worker_id, pool_name, &listener, cancel_token.clone()).await {
+                        match spawn_and_ready(&init.config, &init.worker_id, init.pool_name.as_str(), &init.listener, init.cancel_token.clone()).await {
                             Ok((new_child, new_socket)) => {
-                                connection.store(new_socket);
+                                init.connection.store(new_socket);
                                 child = new_child;
                                 worker_started_at = Instant::now();
                             }
                             Err(e) => {
-                                warn!(pool = %pool_name, error = %e, "restart failed");
+                                warn!(pool = %init.pool_name, error = %e, "restart failed");
                                 break;
                             }
                         }
                     }
                 }
             }
-            _ = cancel_token.cancelled() => {
+            _ = init.cancel_token.cancelled() => {
                 break;
             }
         }
     }
 
     // Grace period: let the worker exit cleanly, force-kill if needed.
-    let grace = config.shutdown_grace + config.force_kill_buffer;
+    let grace = init.config.shutdown_grace + init.config.force_kill_buffer;
     match tokio::time::timeout(grace, child.wait()).await {
-        Ok(Ok(_)) | Ok(Err(_)) => info!(pool = %pool_name, "worker exited cleanly"),
+        Ok(Ok(_)) | Ok(Err(_)) => info!(pool = %init.pool_name, "worker exited cleanly"),
         Err(_elapsed) => {
             let _ = child.kill().await;
-            info!(pool = %pool_name, "grace period elapsed; force-killed worker");
+            info!(pool = %init.pool_name, "grace period elapsed; force-killed worker");
         }
     }
 }

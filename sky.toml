@@ -31,6 +31,15 @@ shutdown_grace = "5s"
 
 manifest_path = "./sky-manifest.json"
 
+[auth]
+# HMAC-SHA256 secret for JWT signing and verification.
+# Leave empty to disable auth (routes with requireAuth() will fail at startup).
+# In production, use a long random string (e.g. `openssl rand -hex 32`).
+jwt_secret = ""
+# Default token lifetime for issueToken(). The gateway enforces expiry
+# on every verified token regardless of this setting.
+token_ttl = "24h"
+
 [build]
 # Directories to scan for @Service/@Handler decorated classes.
 # Pointed at the demo so that `sky build` from the project root produces
