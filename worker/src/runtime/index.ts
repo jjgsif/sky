@@ -1,4 +1,5 @@
 export * from "./dispatcher";
+export type { RequestContext } from "./context";
 export * from "./errors";
 export * from "./jwt";
 export * from "./logger";

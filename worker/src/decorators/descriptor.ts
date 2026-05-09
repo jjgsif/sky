@@ -1,4 +1,4 @@
-import type { BodyDescriptor, HeaderDescriptor, QueryDescriptor, ParamDescriptor } from "./types";
+import type { BodyDescriptor, ContextDescriptor, HeaderDescriptor, QueryDescriptor, ParamDescriptor } from "./types";
 
 // `phantom` is a never-invoked function used only to carry T at the type
 // level. The runtime closure is harmless (single allocation per descriptor).
@@ -16,11 +16,15 @@ function StreamedBody(): BodyDescriptor<AsyncIterable<Uint8Array>> {
 function Header(name: string): HeaderDescriptor { return { source: "header", name }; }
 function Query(name: string): QueryDescriptor { return { source: "query", name }; }
 function Param(name: string): ParamDescriptor { return { source: "param", name }; }
+function Context<TBody = unknown>(): ContextDescriptor<TBody> {
+    return { source: "context", __bodyType: phantom as (x: TBody) => TBody };
+}
 
 export {
     Body,
     StreamedBody,
     Header,
     Query,
-    Param
+    Param,
+    Context,
 };

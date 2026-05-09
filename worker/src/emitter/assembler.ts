@@ -254,6 +254,9 @@ function processHandlers(
 
         // Process each extract descriptor (keyed by the input-object field).
         for (const [field, descriptor] of Object.entries(handlerDef.extract)) {
+            // Context descriptors are runtime-only — the gateway has no concept of them.
+            if (descriptor.source === "context") continue;
+
             const extract: ManifestExtract = {
                 field,
                 source: descriptor.source,

@@ -1,7 +1,7 @@
 {
   "version": "1",
-  "hash": "sha256:ec5e9ae281b3c4d5ba04be8d16e55669e777b0f400b780941c47160618c2a647",
-  "emitted_at": "2026-05-09T18:53:59.376Z",
+  "hash": "sha256:65d66cff9e64cce71dce050662b069dda59a0a72ed9bd2653c6f296297231d10",
+  "emitted_at": "2026-05-09T21:30:17.133Z",
   "services": [
     {
       "name": "HelloService",
@@ -440,11 +440,11 @@
         "throw": {
           "$ref": "#/schemas/throw"
         },
-        "__@asyncIterator@68": {
+        "__@asyncIterator@77": {
           "type": "object",
           "properties": {}
         },
-        "__@asyncDispose@82": {
+        "__@asyncDispose@91": {
           "type": "object",
           "properties": {}
         }
@@ -453,8 +453,8 @@
         "next",
         "return",
         "throw",
-        "__@asyncIterator@68",
-        "__@asyncDispose@82"
+        "__@asyncIterator@77",
+        "__@asyncDispose@91"
       ]
     },
     "next": {
@@ -622,11 +622,11 @@
         "getOrInsertComputed": {
           "$ref": "#/schemas/getOrInsertComputed"
         },
-        "__@iterator@512": {
+        "__@iterator@521": {
           "type": "object",
           "properties": {}
         },
-        "__@toStringTag@58": {
+        "__@toStringTag@67": {
           "type": "string"
         }
       },
@@ -643,8 +643,8 @@
         "values",
         "getOrInsert",
         "getOrInsertComputed",
-        "__@iterator@512",
-        "__@toStringTag@58"
+        "__@iterator@521",
+        "__@toStringTag@67"
       ]
     },
     "clear": {

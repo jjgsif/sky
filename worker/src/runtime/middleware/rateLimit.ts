@@ -1,4 +1,4 @@
-import type {InlineNativeMiddleware} from "@sky/decorators";
+import type {InlineNativeMiddleware} from "../../decorators";
 
 /**
  * Identifies the source of a request for rate limiting purposes.

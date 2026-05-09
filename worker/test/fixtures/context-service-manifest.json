@@ -1,7 +1,7 @@
 {
   "version": "1",
-  "hash": "sha256:4133a3067449c01fa96a04f61ea4393611099116f434cbaf590b7e14bdf4259e",
-  "emitted_at": "2026-05-09T21:35:08.088Z",
+  "hash": "sha256:e34a05a5086498f0edd8447f36e8b3f0bc778c8c9521becac6bbc9b6ef6e8067",
+  "emitted_at": "2026-05-09T21:35:18.749Z",
   "services": [
     {
       "name": "DatabaseClient",
@@ -39,20 +39,14 @@
           "extract": [
             {
               "field": "body",
-              "source": "body",
-              "schema": {
-                "$ref": "#/schemas/CreateUserInput"
-              }
+              "source": "body"
             },
             {
               "field": "tenantId",
               "source": "header",
               "name": "x-tenant-id"
             }
-          ],
-          "response": {
-            "$ref": "#/schemas/UserResponse"
-          }
+          ]
         },
         {
           "name": "getUser",
@@ -67,10 +61,7 @@
               "source": "param",
               "name": "id"
             }
-          ],
-          "response": {
-            "$ref": "#/schemas/UserResponse"
-          }
+          ]
         },
         {
           "name": "listUsers",
@@ -90,13 +81,7 @@
               "source": "query",
               "name": "limit"
             }
-          ],
-          "response": {
-            "type": "array",
-            "items": {
-              "$ref": "#/schemas/UserResponse"
-            }
-          }
+          ]
         },
         {
           "name": "updateUser",
@@ -113,15 +98,9 @@
             },
             {
               "field": "body",
-              "source": "body",
-              "schema": {
-                "$ref": "#/schemas/UpdateUserInput"
-              }
+              "source": "body"
             }
-          ],
-          "response": {
-            "$ref": "#/schemas/UserResponse"
-          }
+          ]
         },
         {
           "name": "deleteUser",
@@ -157,16 +136,82 @@
           "status": 200,
           "validate": true,
           "streaming": false,
+          "extract": []
+        }
+      ]
+    },
+    {
+      "name": "ContextService",
+      "className": "ContextService",
+      "lifetime": "scoped",
+      "dependencies": [],
+      "handlers": [
+        {
+          "name": "getMe",
+          "method": "GET",
+          "path": "/me",
+          "status": 200,
+          "validate": true,
+          "streaming": false,
           "extract": [],
           "response": {
             "type": "object",
             "properties": {
-              "status": {
+              "sub": {
+                "type": [
+                  "string",
+                  "null"
+                ]
+              }
+            },
+            "required": [
+              "sub"
+            ]
+          }
+        },
+        {
+          "name": "createItem",
+          "method": "POST",
+          "path": "/items",
+          "status": 201,
+          "validate": true,
+          "streaming": false,
+          "extract": [],
+          "response": {
+            "type": "object",
+            "properties": {
+              "name": {
                 "type": "string"
               }
             },
             "required": [
-              "status"
+              "name"
+            ]
+          }
+        },
+        {
+          "name": "getItem",
+          "method": "GET",
+          "path": "/items/:id",
+          "status": 200,
+          "validate": true,
+          "streaming": false,
+          "extract": [
+            {
+              "field": "id",
+              "source": "param",
+              "name": "id"
+            }
+          ],
+          "response": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id"
             ]
           }
         }
@@ -182,71 +227,5 @@
       "kind": "user"
     }
   ],
-  "schemas": {
-    "CreateUserInput": {
-      "type": "object",
-      "properties": {
-        "email": {
-          "type": "string"
-        },
-        "name": {
-          "type": "string"
-        },
-        "role": {
-          "type": "string",
-          "enum": [
-            "admin",
-            "member"
-          ]
-        }
-      },
-      "required": [
-        "email",
-        "name",
-        "role"
-      ]
-    },
-    "UserResponse": {
-      "type": "object",
-      "properties": {
-        "id": {
-          "type": "string"
-        },
-        "email": {
-          "type": "string"
-        },
-        "name": {
-          "type": "string"
-        },
-        "role": {
-          "type": "string"
-        },
-        "createdAt": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "id",
-        "email",
-        "name",
-        "role",
-        "createdAt"
-      ]
-    },
-    "UpdateUserInput": {
-      "type": "object",
-      "properties": {
-        "name": {
-          "type": "string"
-        },
-        "role": {
-          "type": "string",
-          "enum": [
-            "admin",
-            "member"
-          ]
-        }
-      }
-    }
-  }
+  "schemas": {}
 }

@@ -2,6 +2,7 @@ import { SkyWorkerSocket, type SkyInvocation } from "../transport";
 import { ServiceRegistry } from "./service-registry.js";
 import type { SkyMiddleware, SkyResponse, SkyBody, MiddlewareContext } from "./middleware/types";
 import { HttpError } from "./errors";
+import { buildRequestContext } from "./context";
 
 // ---------------------------------------------------------------------------
 // Manifest handler metadata index
@@ -161,6 +162,9 @@ async function handleInvocation(
         break;
       case "header":
         input[field] = invocation.headers[descriptor.name.toLowerCase()];
+        break;
+      case "context":
+        input[field] = buildRequestContext(invocation);
         break;
     }
   }

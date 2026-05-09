@@ -1,4 +1,4 @@
-import type { InlineNativeMiddleware } from "@sky/decorators";
+import type { InlineNativeMiddleware } from "../../decorators";
 
 /**
  * Configuration for the `requireAuth` middleware.

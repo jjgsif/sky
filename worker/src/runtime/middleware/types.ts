@@ -1,6 +1,6 @@
 import type { SkyInvocation } from "../../transport";
-import type {CorsConfig} from "@sky/runtime/middleware/cors";
-import type {RateLimitConfig} from "@sky/runtime/middleware/rateLimit";
+import type {CorsConfig} from "../middleware/cors";
+import type {RateLimitConfig} from "../middleware/rateLimit";
 
 export interface NativeMiddlewareDescriptor {
     kind: "native";
