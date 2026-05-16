@@ -41,6 +41,16 @@ fn ensure_manifest_path_env() {
     }
 }
 
+/// Returns true if `bun` is available on PATH.
+fn bun_available() -> bool {
+    std::process::Command::new("bun")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok()
+}
+
 /// Generate a unique worker ID per test so parallel tests use separate sockets.
 ///
 /// ID strings like `"test-{name}-{pid}-{nanos}"` produce paths under
@@ -63,6 +73,10 @@ fn test_config() -> WorkerConfig {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn start_and_shutdown_happy_path() {
+    if !bun_available() {
+        eprintln!("skipping: bun not on PATH");
+        return;
+    }
     ensure_manifest_path_env();
     let id = unique_worker_id("happy");
     let supervisor = Supervisor::start(test_config(), &id)
@@ -88,6 +102,10 @@ async fn readiness_timeout_on_invalid_binary() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shutdown_is_idempotent_via_drop() {
+    if !bun_available() {
+        eprintln!("skipping: bun not on PATH");
+        return;
+    }
     ensure_manifest_path_env();
     let supervisor = Supervisor::start(test_config(), unique_worker_id("drop"))
         .await
@@ -100,6 +118,10 @@ async fn shutdown_is_idempotent_via_drop() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shutdown_completes_within_grace_period() {
+    if !bun_available() {
+        eprintln!("skipping: bun not on PATH");
+        return;
+    }
     ensure_manifest_path_env();
     let mut config = test_config();
     config.shutdown_grace = Duration::from_secs(3);
