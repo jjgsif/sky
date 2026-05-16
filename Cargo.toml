@@ -7,8 +7,6 @@ edition = "2021"
 resolver = "2"
 members = [
   "crates/sky-gateway",
-  "crates/sky-middleware",
-  "crates/sky-proto",
   "crates/sky-router",
   "crates/sky-runtime",
   "crates/sky-worker",
