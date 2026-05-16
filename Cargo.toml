@@ -16,12 +16,12 @@ members = [
 
 [workspace.package]
 version = "0.1.0"
-authors = ["Sky Framework Contributors"]
+authors = ["John Sifuentes"]
 edition = "2024"
 rust-version = "1.95"
 readme = "README.md"
-repository = "https://github.com/REPLACE/sky"
-license = "MIT OR Apache-2.0"
+repository = "https://github.com/jjgsif/sky"
+license = "MIT"
 
 [workspace.dependencies]
 # Async runtime
