@@ -476,7 +476,6 @@ socket_path = "/tmp/sky-worker.sock"
 worker_version = "0.1.0"
 "#;
         let config: GatewayConfig = toml::from_str(toml_src).unwrap();
-        let path = PathBuf::from("fake-test-path");
         // The from_file path is the one that validates version; we
         // emulate that check manually since we don't want a real file.
         assert_eq!(config.version, "99");

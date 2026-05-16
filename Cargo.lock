@@ -2204,10 +2204,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "sky-middleware"
-version = "0.1.0"
-
-[[package]]
 name = "sky-router"
 version = "0.1.0"
 
@@ -2241,11 +2237,9 @@ dependencies = [
  "serde_json",
  "sha2",
  "sky-runtime",
- "thiserror 1.0.69",
  "tokio",
  "tokio-util",
  "tracing",
- "tracing-subscriber",
 ]
 
 [[package]]
