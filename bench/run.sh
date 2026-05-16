@@ -50,12 +50,11 @@ if ! command -v wrk2 &>/dev/null; then
 fi
 
 # ── Build ─────────────────────────────────────────────────────────────────────
-# echo "==> Building sky-gateway (release)..."
-# cargo build -p sky-gateway --release --quiet
+echo "==> Building sky-gateway (release)..."
+cargo build -p sky-gateway --release --quiet
 
 # ── Start gateway ─────────────────────────────────────────────────────────────
 start_gateway() {
-    echo "==> Connecting to Gateway"
     echo "==> Starting gateway (config: $BENCH_CONFIG)..."
     "$GATEWAY_BIN" --config "$BENCH_CONFIG" &>/tmp/sky-bench-gateway.log &
     GATEWAY_PID=$!
@@ -146,6 +145,16 @@ run_ramp() {
     echo "    Duration per step: ${RAMP_DURATION}"
     echo ""
 
+    # Warm up JIT before the first measurement step — cold workers show 2–3x
+    # higher latency and a 10–15% lower throughput ceiling on the first step.
+    echo "==> JIT warmup (15s at 100000 req/s)..."
+    wrk2 -t"$wrk2_THREADS" -c"$wrk2_CONNECTIONS" \
+        -d 15s -R 100000 \
+        -s bench/wrk/hello.lua \
+        "${BASE_URL}/hello" >/dev/null 2>&1 || true
+    echo "    Done."
+    echo ""
+
     local ramp_results
     ramp_results="$(mktemp /tmp/sky-ramp-XXXXXX.txt)"
     trap "rm -f $ramp_results" RETURN
@@ -174,9 +183,15 @@ run_ramp() {
         p50=$(grep -E "^\s+50\.000%" "$step_out" | awk '{print $2}' || echo "0")
         p99=$(grep -E "^\s+99\.000%" "$step_out" | awk '{print $2}' || echo "0")
 
-        # Convert p99 to ms for comparison (wrk2 outputs in us)
+        # Convert p99 to ms for threshold comparison.
+        # wrk2 emits latency with unit suffix: us/ms/s — check ms before s.
         local p99_ms
-        p99_ms=$(echo "$p99" | sed 's/us//' | awk '{printf "%.1f", $1/1000}' 2>/dev/null || echo "0")
+        p99_ms=$(echo "$p99" | awk '{
+            if ($0 ~ /[0-9.]+ms/) { gsub(/ms/, ""); printf "%.2f", $0+0 }
+            else if ($0 ~ /[0-9.]+us/) { gsub(/us/, ""); printf "%.3f", $0/1000 }
+            else if ($0 ~ /[0-9.]+s/)  { gsub(/s/, "");  printf "%.0f", $0*1000 }
+            else { print 0 }
+        }' 2>/dev/null || echo "0")
 
         if (( $(echo "$p99_ms > $RAMP_LATENCY_THRESHOLD" | bc -l 2>/dev/null || echo 0) )); then
             status="SATURATED"

@@ -12,9 +12,11 @@ const Handler = (options: HandlerOptions) => {
             method: options.method,
             path: options.path,
             validate: options.validate ?? true,
-            streaming: options.streaming ?? false,
+            streamResponseBody: options.streamResponseBody ?? options.streaming ?? false,
+            streamRequestBody: Object.values(options.extract ?? {}).some((e) => e.source === "body" && e.stream)
         };
         if (options.middleware?.length) def.middleware = options.middleware;
+        if (options.timeout !== undefined) def.timeoutMs = options.timeout;
         (context.metadata.handlers as Map<string, HandlerDefinition>).set(context.name.toString(), def);
     };
 };

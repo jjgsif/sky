@@ -1,5 +1,5 @@
-import { globalMiddleware } from "sky/emitter";
-import { cors } from "sky/runtime";
+import { globalMiddleware } from "sky-framework/emitter";
+import { cors } from "sky-framework/runtime";
 
 globalMiddleware([
     cors({

@@ -36,7 +36,9 @@ fn workspace_root() -> PathBuf {
 fn ensure_manifest_path_env() {
     let manifest = workspace_root().join("sky-manifest.json");
     // SAFETY: All tests set the same value; concurrent writes converge.
-    unsafe { std::env::set_var("SKY_MANIFEST_PATH", manifest); }
+    unsafe {
+        std::env::set_var("SKY_MANIFEST_PATH", manifest);
+    }
 }
 
 /// Generate a unique worker ID per test so parallel tests use separate sockets.

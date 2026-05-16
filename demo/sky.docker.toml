@@ -18,6 +18,7 @@ level = "info"
 bun_path = "bun"
 worker_script = "./index.ts"
 worker_version = "0.1.0"
+pool_size = 4
 readiness_timeout = "10s"
 shutdown_grace = "5s"
 manifest_path = "./sky-manifest.json"

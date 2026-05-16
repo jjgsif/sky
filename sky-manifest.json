@@ -1,52 +1,8 @@
 {
   "version": "1",
-  "hash": "sha256:21149bac61d58c679f41eb1e813f6e55bf2c273083da0bf36b01a56fe107c4fe",
-  "emitted_at": "2026-05-08T13:34:31.852Z",
+  "hash": "sha256:131e7df7804cc1e5e8da31ab0136fcb09539017198ccd89024b05ec6147eaa6b",
+  "emitted_at": "2026-05-16T02:00:19.696Z",
   "services": [
-    {
-      "name": "HelloService",
-      "className": "HelloService",
-      "lifetime": "singleton",
-      "dependencies": [],
-      "handlers": [
-        {
-          "name": "greet",
-          "method": "POST",
-          "path": "/hello",
-          "status": 201,
-          "validate": true,
-          "streaming": false,
-          "extract": [
-            {
-              "field": "body",
-              "source": "body",
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "name": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "name"
-                ]
-              }
-            }
-          ],
-          "response": {
-            "type": "object",
-            "properties": {
-              "message": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "message"
-            ]
-          }
-        }
-      ]
-    },
     {
       "name": "StreamService",
       "className": "StreamService",
@@ -59,41 +15,15 @@
           "path": "/stream/events",
           "status": 200,
           "validate": true,
-          "streaming": true,
+          "streamRequestBody": false,
+          "streamResponseBody": true,
           "extract": [
             {
               "field": "count",
               "source": "query",
               "name": "count"
             }
-          ],
-          "response": {
-            "type": "object",
-            "properties": {
-              "status": {
-                "type": "number"
-              },
-              "headers": {
-                "type": "object",
-                "properties": {
-                  "content-type": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "content-type"
-                ]
-              },
-              "body": {
-                "$ref": "#/schemas/AsyncGenerator"
-              }
-            },
-            "required": [
-              "status",
-              "headers",
-              "body"
-            ]
-          }
+          ]
         },
         {
           "name": "fibonacci",
@@ -101,41 +31,15 @@
           "path": "/stream/fibonacci",
           "status": 200,
           "validate": true,
-          "streaming": true,
+          "streamRequestBody": false,
+          "streamResponseBody": true,
           "extract": [
             {
               "field": "limit",
               "source": "query",
               "name": "limit"
             }
-          ],
-          "response": {
-            "type": "object",
-            "properties": {
-              "status": {
-                "type": "number"
-              },
-              "headers": {
-                "type": "object",
-                "properties": {
-                  "content-type": {
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "content-type"
-                ]
-              },
-              "body": {
-                "$ref": "#/schemas/AsyncGenerator"
-              }
-            },
-            "required": [
-              "status",
-              "headers",
-              "body"
-            ]
-          }
+          ]
         }
       ]
     },
@@ -151,7 +55,8 @@
           "path": "/users",
           "status": 200,
           "validate": true,
-          "streaming": false,
+          "streamRequestBody": false,
+          "streamResponseBody": false,
           "extract": [
             {
               "field": "token",
@@ -190,7 +95,8 @@
           "path": "/stats",
           "status": 200,
           "validate": true,
-          "streaming": false,
+          "streamRequestBody": false,
+          "streamResponseBody": false,
           "extract": [
             {
               "field": "token",
@@ -225,42 +131,6 @@
       }
     },
     {
-      "name": "HealthService",
-      "className": "HealthService",
-      "lifetime": "singleton",
-      "dependencies": [],
-      "handlers": [
-        {
-          "name": "check",
-          "method": "GET",
-          "path": "/health",
-          "status": 200,
-          "validate": true,
-          "streaming": false,
-          "extract": [],
-          "response": {
-            "type": "object",
-            "properties": {
-              "status": {
-                "type": "string"
-              },
-              "uptime": {
-                "type": "string"
-              },
-              "startedAt": {
-                "type": "string"
-              }
-            },
-            "required": [
-              "status",
-              "uptime",
-              "startedAt"
-            ]
-          }
-        }
-      ]
-    },
-    {
       "name": "UserService",
       "className": "UserService",
       "lifetime": "scoped",
@@ -272,7 +142,8 @@
           "path": "/users",
           "status": 201,
           "validate": true,
-          "streaming": false,
+          "streamRequestBody": false,
+          "streamResponseBody": false,
           "extract": [
             {
               "field": "body",
@@ -292,7 +163,8 @@
           "path": "/users/:id",
           "status": 200,
           "validate": true,
-          "streaming": false,
+          "streamRequestBody": false,
+          "streamResponseBody": false,
           "extract": [
             {
               "field": "id",
@@ -310,7 +182,8 @@
           "path": "/users",
           "status": 200,
           "validate": true,
-          "streaming": false,
+          "streamRequestBody": false,
+          "streamResponseBody": false,
           "extract": [
             {
               "field": "page",
@@ -356,7 +229,8 @@
           "path": "/users/:id",
           "status": 200,
           "validate": true,
-          "streaming": false,
+          "streamRequestBody": false,
+          "streamResponseBody": false,
           "extract": [
             {
               "field": "id",
@@ -381,7 +255,8 @@
           "path": "/users/:id",
           "status": 204,
           "validate": true,
-          "streaming": false,
+          "streamRequestBody": false,
+          "streamResponseBody": false,
           "extract": [
             {
               "field": "id",
@@ -392,6 +267,238 @@
           "response": {
             "$ref": "#/schemas/Response"
           }
+        }
+      ]
+    },
+    {
+      "name": "HealthService",
+      "className": "HealthService",
+      "lifetime": "singleton",
+      "dependencies": [],
+      "handlers": [
+        {
+          "name": "check",
+          "method": "GET",
+          "path": "/health",
+          "status": 200,
+          "validate": true,
+          "streamRequestBody": false,
+          "streamResponseBody": false,
+          "extract": [],
+          "response": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "string"
+              },
+              "uptime": {
+                "type": "string"
+              },
+              "startedAt": {
+                "type": "string"
+              },
+              "workerId": {
+                "type": "string"
+              },
+              "requestId": {
+                "type": "number"
+              }
+            },
+            "required": [
+              "status",
+              "uptime",
+              "startedAt",
+              "workerId",
+              "requestId"
+            ]
+          },
+          "middleware": [
+            {
+              "kind": "native",
+              "name": "rateLimit",
+              "config": {
+                "bucket": "api",
+                "identifier": "ip",
+                "perMinute": 20000000000
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "FileUploadService",
+      "className": "FileUploadService",
+      "lifetime": "scoped",
+      "dependencies": [],
+      "handlers": [
+        {
+          "name": "upload",
+          "method": "POST",
+          "path": "/upload",
+          "status": 201,
+          "validate": false,
+          "streamRequestBody": true,
+          "streamResponseBody": false,
+          "extract": [
+            {
+              "field": "stream",
+              "source": "body",
+              "schema": {
+                "$ref": "#/schemas/AsyncIterable"
+              }
+            }
+          ],
+          "response": {
+            "type": "object",
+            "properties": {
+              "status": {
+                "type": "number"
+              },
+              "body": {
+                "type": "object",
+                "properties": {
+                  "files": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "filename": {
+                          "type": "string"
+                        },
+                        "field": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "filename",
+                        "field"
+                      ]
+                    }
+                  },
+                  "count": {
+                    "type": "number"
+                  }
+                },
+                "required": [
+                  "files",
+                  "count"
+                ]
+              }
+            },
+            "required": [
+              "status",
+              "body"
+            ]
+          }
+        },
+        {
+          "name": "download",
+          "method": "GET",
+          "path": "/download/:filename",
+          "status": 200,
+          "validate": false,
+          "streamRequestBody": false,
+          "streamResponseBody": true,
+          "extract": [
+            {
+              "field": "filename",
+              "source": "param",
+              "name": "filename"
+            }
+          ]
+        }
+      ],
+      "group": {
+        "prefix": "/api/files",
+        "middleware": []
+      }
+    },
+    {
+      "name": "BenchmarkService",
+      "className": "BenchmarkService",
+      "lifetime": "singleton",
+      "dependencies": [],
+      "handlers": [
+        {
+          "name": "results",
+          "method": "GET",
+          "path": "/bench/results",
+          "status": 200,
+          "validate": false,
+          "streamRequestBody": false,
+          "streamResponseBody": false,
+          "extract": [],
+          "response": {
+            "$ref": "#/schemas/BenchResults"
+          }
+        }
+      ]
+    },
+    {
+      "name": "HelloService",
+      "className": "HelloService",
+      "lifetime": "singleton",
+      "dependencies": [],
+      "handlers": [
+        {
+          "name": "greet",
+          "method": "POST",
+          "path": "/hello",
+          "status": 201,
+          "validate": true,
+          "streamRequestBody": false,
+          "streamResponseBody": false,
+          "extract": [
+            {
+              "field": "body",
+              "source": "body",
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name"
+                ]
+              }
+            }
+          ],
+          "response": {
+            "type": "object",
+            "properties": {
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message"
+            ]
+          }
+        },
+        {
+          "name": "timeoutTest",
+          "method": "GET",
+          "path": "/hello/timeout-test",
+          "status": 200,
+          "validate": false,
+          "streamRequestBody": false,
+          "streamResponseBody": false,
+          "extract": [],
+          "response": {
+            "type": "object",
+            "properties": {
+              "message": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "message"
+            ]
+          },
+          "timeout": 5000
         }
       ]
     }
@@ -417,47 +524,6 @@
     }
   ],
   "schemas": {
-    "AsyncGenerator": {
-      "type": "object",
-      "properties": {
-        "next": {
-          "$ref": "#/schemas/next"
-        },
-        "return": {
-          "$ref": "#/schemas/return"
-        },
-        "throw": {
-          "$ref": "#/schemas/throw"
-        },
-        "__@asyncIterator@61": {
-          "type": "object",
-          "properties": {}
-        },
-        "__@asyncDispose@75": {
-          "type": "object",
-          "properties": {}
-        }
-      },
-      "required": [
-        "next",
-        "return",
-        "throw",
-        "__@asyncIterator@61",
-        "__@asyncDispose@75"
-      ]
-    },
-    "next": {
-      "type": "object",
-      "properties": {}
-    },
-    "return": {
-      "type": "object",
-      "properties": {}
-    },
-    "throw": {
-      "type": "object",
-      "properties": {}
-    },
     "createUser_body": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "type": "object",
@@ -611,11 +677,11 @@
         "getOrInsertComputed": {
           "$ref": "#/schemas/getOrInsertComputed"
         },
-        "__@iterator@505": {
+        "__@iterator@446": {
           "type": "object",
           "properties": {}
         },
-        "__@toStringTag@51": {
+        "__@toStringTag@874": {
           "type": "string"
         }
       },
@@ -632,8 +698,8 @@
         "values",
         "getOrInsert",
         "getOrInsertComputed",
-        "__@iterator@505",
-        "__@toStringTag@51"
+        "__@iterator@446",
+        "__@toStringTag@874"
       ]
     },
     "clear": {
@@ -769,6 +835,257 @@
         }
       },
       "additionalProperties": false
+    },
+    "AsyncIterable": {
+      "type": "object",
+      "properties": {
+        "__@asyncIterator@1093": {
+          "type": "object",
+          "properties": {}
+        }
+      },
+      "required": [
+        "__@asyncIterator@1093"
+      ]
+    },
+    "BenchResults": {
+      "type": "object",
+      "properties": {
+        "latestStandard": {
+          "oneOf": [
+            {
+              "$ref": "#/schemas/StandardBenchmark"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "latestRamp": {
+          "oneOf": [
+            {
+              "$ref": "#/schemas/RampResult"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "latestTtfb": {
+          "oneOf": [
+            {
+              "$ref": "#/schemas/TtfbResult"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "error": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "latestStandard",
+        "latestRamp",
+        "latestTtfb"
+      ]
+    },
+    "StandardBenchmark": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "type": "string"
+        },
+        "commit": {
+          "type": "string"
+        },
+        "settings": {
+          "type": "object",
+          "properties": {}
+        },
+        "scenarios": {
+          "type": "array",
+          "items": {
+            "$ref": "#/schemas/ScenarioResult"
+          }
+        }
+      },
+      "required": [
+        "timestamp",
+        "commit",
+        "settings",
+        "scenarios"
+      ]
+    },
+    "ScenarioResult": {
+      "type": "object",
+      "properties": {
+        "scenario": {
+          "type": "string"
+        },
+        "requestsPerSec": {
+          "type": "string"
+        },
+        "totalRequests": {
+          "type": "string"
+        },
+        "latency": {
+          "$ref": "#/schemas/LatencyPercentiles"
+        }
+      },
+      "required": [
+        "scenario",
+        "requestsPerSec",
+        "totalRequests",
+        "latency"
+      ]
+    },
+    "LatencyPercentiles": {
+      "type": "object",
+      "properties": {
+        "p50": {
+          "type": "string"
+        },
+        "p75": {
+          "type": "string"
+        },
+        "p90": {
+          "type": "string"
+        },
+        "p95": {
+          "type": "string"
+        },
+        "p99": {
+          "type": "string"
+        },
+        "p999": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "p50",
+        "p75",
+        "p90",
+        "p95",
+        "p99",
+        "p999"
+      ]
+    },
+    "RampResult": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "type": "string"
+        },
+        "saturationPoint": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "peakSustainable": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "$ref": "#/schemas/RampRow"
+          }
+        }
+      },
+      "required": [
+        "timestamp",
+        "saturationPoint",
+        "peakSustainable",
+        "rows"
+      ]
+    },
+    "RampRow": {
+      "type": "object",
+      "properties": {
+        "targetRps": {
+          "type": "number"
+        },
+        "actualRps": {
+          "type": "number"
+        },
+        "p50": {
+          "type": "string"
+        },
+        "p99": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "targetRps",
+        "actualRps",
+        "p50",
+        "p99",
+        "status"
+      ]
+    },
+    "TtfbResult": {
+      "type": "object",
+      "properties": {
+        "timestamp": {
+          "type": "string"
+        },
+        "runs": {
+          "type": "string"
+        },
+        "concurrency": {
+          "type": "string"
+        },
+        "endpoints": {
+          "type": "array",
+          "items": {
+            "$ref": "#/schemas/TtfbEndpoint"
+          }
+        }
+      },
+      "required": [
+        "timestamp",
+        "runs",
+        "concurrency",
+        "endpoints"
+      ]
+    },
+    "TtfbEndpoint": {
+      "type": "object",
+      "properties": {
+        "endpoint": {
+          "type": "string"
+        },
+        "rows": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "percentile": {
+                "type": "string"
+              },
+              "ttfbMs": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "percentile",
+              "ttfbMs"
+            ]
+          }
+        }
+      },
+      "required": [
+        "endpoint",
+        "rows"
+      ]
     }
   }
 }

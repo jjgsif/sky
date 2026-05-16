@@ -1,0 +1,306 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v[0-9]+.[0-9]+.[0-9]+*"
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  prepare:
+    name: Extract version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - id: version
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+  build-linux-amd64:
+    name: Build (linux/amd64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: rust-release-linux-amd64-${{ hashFiles('Cargo.lock') }}
+          restore-keys: rust-release-linux-amd64-
+
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build
+        run: cross build -p sky-gateway --release --target x86_64-unknown-linux-musl
+
+      - name: Stage artifact
+        run: |
+          mkdir -p dist
+          cp target/x86_64-unknown-linux-musl/release/sky-gateway dist/sky-gateway-linux-amd64
+          sha256sum dist/sky-gateway-linux-amd64 > dist/sky-gateway-linux-amd64.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sky-gateway-linux-amd64
+          path: dist/sky-gateway-linux-amd64*
+
+  build-linux-arm64:
+    name: Build (linux/arm64)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: rust-release-linux-arm64-${{ hashFiles('Cargo.lock') }}
+          restore-keys: rust-release-linux-arm64-
+
+      - name: Install cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+
+      - name: Build
+        run: cross build -p sky-gateway --release --target aarch64-unknown-linux-musl
+
+      - name: Stage artifact
+        run: |
+          mkdir -p dist
+          cp target/aarch64-unknown-linux-musl/release/sky-gateway dist/sky-gateway-linux-arm64
+          sha256sum dist/sky-gateway-linux-arm64 > dist/sky-gateway-linux-arm64.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sky-gateway-linux-arm64
+          path: dist/sky-gateway-linux-arm64*
+
+  build-macos-arm64:
+    name: Build (macos/arm64)
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: rust-release-macos-arm64-${{ hashFiles('Cargo.lock') }}
+          restore-keys: rust-release-macos-arm64-
+
+      - name: Add target
+        run: rustup target add aarch64-apple-darwin
+
+      - name: Build
+        run: cargo build -p sky-gateway --release --target aarch64-apple-darwin
+
+      - name: Stage artifact
+        run: |
+          mkdir -p dist
+          cp target/aarch64-apple-darwin/release/sky-gateway dist/sky-gateway-macos-arm64
+          shasum -a 256 dist/sky-gateway-macos-arm64 > dist/sky-gateway-macos-arm64.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sky-gateway-macos-arm64
+          path: dist/sky-gateway-macos-arm64*
+
+  build-macos-amd64:
+    name: Build (macos/amd64)
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+            target
+          key: rust-release-macos-amd64-${{ hashFiles('Cargo.lock') }}
+          restore-keys: rust-release-macos-amd64-
+
+      - name: Add target
+        run: rustup target add x86_64-apple-darwin
+
+      - name: Build
+        run: cargo build -p sky-gateway --release --target x86_64-apple-darwin
+
+      - name: Stage artifact
+        run: |
+          mkdir -p dist
+          cp target/x86_64-apple-darwin/release/sky-gateway dist/sky-gateway-macos-amd64
+          shasum -a 256 dist/sky-gateway-macos-amd64 > dist/sky-gateway-macos-amd64.sha256
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sky-gateway-macos-amd64
+          path: dist/sky-gateway-macos-amd64*
+
+  github-release:
+    name: GitHub Release
+    needs: [prepare, build-linux-amd64, build-linux-arm64, build-macos-arm64, build-macos-amd64]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Generate SHA256SUMS
+        run: |
+          cd artifacts
+          cat *.sha256 > SHA256SUMS
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: Sky ${{ needs.prepare.outputs.version }}
+          generate_release_notes: true
+          files: |
+            artifacts/sky-gateway-linux-amd64
+            artifacts/sky-gateway-linux-arm64
+            artifacts/sky-gateway-macos-arm64
+            artifacts/sky-gateway-macos-amd64
+            artifacts/SHA256SUMS
+
+  docker-amd64:
+    name: Docker (linux/amd64)
+    needs: [prepare, build-linux-amd64]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: sky-gateway-linux-amd64
+          path: dist/amd64
+
+      - name: Rename binary
+        run: mv dist/amd64/sky-gateway-linux-amd64 dist/amd64/sky-gateway && chmod +x dist/amd64/sky-gateway
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/sky:${{ needs.prepare.outputs.version }}-amd64
+          build-args: TARGETARCH=amd64
+
+  docker-arm64:
+    name: Docker (linux/arm64)
+    needs: [prepare, build-linux-arm64]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: sky-gateway-linux-arm64
+          path: dist/arm64
+
+      - name: Rename binary
+        run: mv dist/arm64/sky-gateway-linux-arm64 dist/arm64/sky-gateway && chmod +x dist/arm64/sky-gateway
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/arm64
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/sky:${{ needs.prepare.outputs.version }}-arm64
+          build-args: TARGETARCH=arm64
+
+  docker-manifest:
+    name: Docker multi-arch manifest
+    needs: [prepare, docker-amd64, docker-arm64]
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create and push manifest
+        run: |
+          VERSION=${{ needs.prepare.outputs.version }}
+          REPO=ghcr.io/${{ github.repository_owner }}/sky
+          docker buildx imagetools create \
+            -t ${REPO}:${VERSION} \
+            -t ${REPO}:latest \
+            ${REPO}:${VERSION}-amd64 \
+            ${REPO}:${VERSION}-arm64
+
+  publish-npm:
+    name: Publish sky-framework
+    needs: [github-release]
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: worker
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+
+      - name: Publish
+        run: bun x --bun npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+  publish-create-sky-app:
+    name: Publish create-sky-app
+    needs: [github-release]
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: create-sky-app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Publish
+        run: bun x --bun npm publish --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}

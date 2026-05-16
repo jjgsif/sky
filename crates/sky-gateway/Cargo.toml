@@ -40,3 +40,5 @@ jsonwebtoken = { workspace = true }
 socket2 = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
+hyper = { workspace = true, features = ["http1", "client"] }
+hyper-util = { workspace = true }

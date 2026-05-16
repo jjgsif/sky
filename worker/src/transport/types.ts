@@ -7,6 +7,13 @@ enum FrameType {
     Ping = 0x06,
     Pong = 0x07,
     Drain = 0x08,
+    InvokeBodyChunk = 0x09,
+    InvokeEnd = 0x0A,
+    InvokeCredit = 0x0B,
+    InvokeCancel = 0x0C,
+    ResponseCredit = 0x0D,
+    AuthChallenge = 0x0E,
+    AuthResponse  = 0x0F,
 }
 
 interface FrameHeader {
@@ -25,6 +32,7 @@ interface SkyInvocation {
     query: Record<string, string>;
     headers: Record<string, string>;
     body: Uint8Array;
+    streamedBody: AsyncIterable<Uint8Array> | null
 }
 
 

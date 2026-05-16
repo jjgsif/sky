@@ -57,10 +57,11 @@ tower = "0.5"
 
 # HTTP server and extractors
 axum = "0.7"
+axum-core = "0.4.5"
 # Unix socket connection handling
 hyper = "1"
 hyper-util = { version = "0.1", features = ["tokio"] }
-tower-http = { version = "0.6", features = ["limit", "trace", "cors"] }
+tower-http = { version = "0.6", features = ["limit", "trace", "cors", "fs", "compression-full"] }
 
 # CLI
 clap = { version = "4", features = ["derive"] }
@@ -82,6 +83,10 @@ jsonwebtoken = "9"
 rmp-serde = "1"
 serde_bytes = "0.11"
 socket2 = { version = "0.5", features = ["all"] }
+rand = "0.9"
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
 
 sky-middleware = { path = "crates/sky-middleware" }
 sky-proto = { path = "crates/sky-proto" }

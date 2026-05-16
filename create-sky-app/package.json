@@ -1,0 +1,19 @@
+{
+  "name": "create-sky-app",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Create a new Sky framework project",
+  "bin": {
+    "create-sky-app": "./src/index.ts"
+  },
+  "files": [
+    "src/"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^6.0.3"
+  }
+}

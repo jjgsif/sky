@@ -1,4 +1,5 @@
 export * from "./dispatcher";
+export * from "./multipart";
 export type { RequestContext } from "./context";
 export * from "./errors";
 export * from "./jwt";

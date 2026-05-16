@@ -125,9 +125,13 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
 
     // ── Socket ───────────────────────────────────────────
 
-    // Connect to the gateway-owned socket.
-    // The gateway creates and binds the socket before spawning us.
-    const skySocket = await SkyWorkerSocket.connect(socketPath);
+    // Connect to the gateway-owned socket and authenticate with the shared secret.
+    const secretHex = process.env.SKY_WORKER_SECRET;
+    if (!secretHex) {
+        throw new Error('[sky] SKY_WORKER_SECRET is not set — cannot authenticate with gateway');
+    }
+    const workerSecret = Buffer.from(secretHex, 'hex');
+    const skySocket = await SkyWorkerSocket.connect(socketPath, workerSecret);
 
     logger.info({ socketPath, workerId, workerVersion }, "worker connected to gateway socket");
 

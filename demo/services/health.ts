@@ -1,4 +1,9 @@
-import { Service, Handler } from "sky/decorators";
+import {Service, Handler, Context, type ExtractContext} from "sky-framework/decorators";
+import {rateLimit} from "sky-framework/runtime";
+
+const requestExtract = {
+  context: Context()
+} as const;
 
 @Service({ lifetime: "singleton" })
 class HealthService {
@@ -7,12 +12,16 @@ class HealthService {
   @Handler({
     method: "GET",
     path: "/health",
+    middleware: [rateLimit({bucket: "api", identifier: "ip", perMinute: 2e10})],
+    extract: requestExtract
   })
-  async check() {
+  async check({context}: ExtractContext<typeof requestExtract>) {
     return {
       status: "healthy",
       uptime: this.uptime(),
       startedAt: this.startedAt,
+      workerId: context.headers["x-sky-worker-id"],
+      requestId: context.requestId,
     };
   }
 

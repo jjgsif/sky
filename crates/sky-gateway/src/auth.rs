@@ -18,7 +18,7 @@
 
 use crate::manifest::Manifest;
 use axum::http::{HeaderMap, StatusCode};
-use jsonwebtoken::{decode, Algorithm, DecodingKey, Validation};
+use jsonwebtoken::{Algorithm, DecodingKey, Validation, decode};
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -34,7 +34,10 @@ struct AuthHandlerConfig {
 
 fn parse_auth_handler_config(config: Option<&Value>) -> AuthHandlerConfig {
     let Some(obj) = config.and_then(|v| v.as_object()) else {
-        return AuthHandlerConfig { scopes: vec![], optional: false };
+        return AuthHandlerConfig {
+            scopes: vec![],
+            optional: false,
+        };
     };
 
     let scopes = obj
@@ -156,7 +159,7 @@ impl AuthValidator {
                     status: StatusCode::UNAUTHORIZED,
                     code: "jwt_missing",
                     message: "Authorization header with Bearer token is required".to_string(),
-                }
+                };
             }
         };
 
@@ -199,18 +202,19 @@ fn extract_bearer(headers: &HeaderMap) -> Option<&str> {
 /// Returns `Some(error_message)` if any required scope is missing.
 pub(crate) fn check_scopes(claims: &Value, required: &[String]) -> Option<String> {
     // Accept either `scope` (space-separated string) or `scopes` (array).
-    let token_scopes: Vec<String> = if let Some(scope_str) = claims
-        .get("scope")
-        .and_then(|v| v.as_str())
-    {
-        scope_str.split_whitespace().map(|s| s.to_string()).collect()
-    } else if let Some(arr) = claims.get("scopes").and_then(|v| v.as_array()) {
-        arr.iter()
-            .filter_map(|s| s.as_str().map(|s| s.to_string()))
-            .collect()
-    } else {
-        vec![]
-    };
+    let token_scopes: Vec<String> =
+        if let Some(scope_str) = claims.get("scope").and_then(|v| v.as_str()) {
+            scope_str
+                .split_whitespace()
+                .map(|s| s.to_string())
+                .collect()
+        } else if let Some(arr) = claims.get("scopes").and_then(|v| v.as_array()) {
+            arr.iter()
+                .filter_map(|s| s.as_str().map(|s| s.to_string()))
+                .collect()
+        } else {
+            vec![]
+        };
 
     for required_scope in required {
         if !token_scopes.contains(required_scope) {
@@ -227,7 +231,7 @@ mod tests {
     use super::*;
     use crate::manifest::Manifest;
     use axum::http::header::AUTHORIZATION;
-    use jsonwebtoken::{encode, EncodingKey, Header};
+    use jsonwebtoken::{EncodingKey, Header, encode};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     const SECRET: &str = "test-secret-key";
@@ -251,12 +255,18 @@ mod tests {
     }
 
     fn valid_token() -> String {
-        mint(SECRET, serde_json::json!({ "sub": "user-1", "exp": now() + 3600 }))
+        mint(
+            SECRET,
+            serde_json::json!({ "sub": "user-1", "exp": now() + 3600 }),
+        )
     }
 
     fn expired_token() -> String {
         // Use a leeway-safe past time (100 days ago).
-        mint(SECRET, serde_json::json!({ "sub": "user-1", "exp": now() - 86400 * 100 }))
+        mint(
+            SECRET,
+            serde_json::json!({ "sub": "user-1", "exp": now() - 86400 * 100 }),
+        )
     }
 
     fn scoped_token_array(scopes: &[&str]) -> String {
@@ -275,10 +285,7 @@ mod tests {
 
     fn bearer(token: &str) -> HeaderMap {
         let mut h = HeaderMap::new();
-        h.insert(
-            AUTHORIZATION,
-            format!("Bearer {token}").parse().unwrap(),
-        );
+        h.insert(AUTHORIZATION, format!("Bearer {token}").parse().unwrap());
         h
     }
 
@@ -420,8 +427,14 @@ mod tests {
         let err = AuthValidator::from_manifest(&manifest_with_auth_handler(), "")
             .err()
             .expect("expected Err when secret is empty and auth route exists");
-        assert!(err.contains("jwt_secret"), "error should mention jwt_secret: {err}");
-        assert!(err.contains("Svc.protected"), "error should name the handler: {err}");
+        assert!(
+            err.contains("jwt_secret"),
+            "error should mention jwt_secret: {err}"
+        );
+        assert!(
+            err.contains("Svc.protected"),
+            "error should name the handler: {err}"
+        );
     }
 
     #[test]
@@ -442,13 +455,19 @@ mod tests {
     #[test]
     fn not_required_for_unknown_handler() {
         let v = AuthValidator::from_manifest(&manifest_no_auth(), "").unwrap();
-        assert!(matches!(v.check("Nobody.nothing", &no_headers()), AuthOutcome::NotRequired));
+        assert!(matches!(
+            v.check("Nobody.nothing", &no_headers()),
+            AuthOutcome::NotRequired
+        ));
     }
 
     #[test]
     fn not_required_for_unprotected_handler() {
         let v = AuthValidator::from_manifest(&manifest_with_auth_handler(), SECRET).unwrap();
-        assert!(matches!(v.check("Svc.open", &no_headers()), AuthOutcome::NotRequired));
+        assert!(matches!(
+            v.check("Svc.open", &no_headers()),
+            AuthOutcome::NotRequired
+        ));
     }
 
     // ── check: missing / malformed token ─────────────────────────────────────
@@ -482,7 +501,10 @@ mod tests {
     #[test]
     fn denied_jwt_invalid_when_signed_with_wrong_secret() {
         let v = AuthValidator::from_manifest(&manifest_with_auth_handler(), SECRET).unwrap();
-        let token = mint("wrong-secret", serde_json::json!({ "sub": "u", "exp": now() + 3600 }));
+        let token = mint(
+            "wrong-secret",
+            serde_json::json!({ "sub": "u", "exp": now() + 3600 }),
+        );
         match v.check("Svc.protected", &bearer(&token)) {
             AuthOutcome::Denied { code, .. } => assert_eq!(code, "jwt_invalid"),
             other => panic!("expected Denied, got {}", variant_name(&other)),
@@ -522,32 +544,44 @@ mod tests {
             SECRET,
             serde_json::json!({ "sub": "u", "exp": now() + 3600, "aud": "sky-api" }),
         );
-        assert!(matches!(v.check("Svc.protected", &bearer(&token)), AuthOutcome::Allowed { .. }));
+        assert!(matches!(
+            v.check("Svc.protected", &bearer(&token)),
+            AuthOutcome::Allowed { .. }
+        ));
     }
 
     // ── check: scope enforcement ─────────────────────────────────────────────
 
     #[test]
     fn allowed_when_token_scope_array_contains_required_scope() {
-        let v = AuthValidator::from_manifest(&manifest_with_scoped_handler(&["admin"]), SECRET).unwrap();
+        let v = AuthValidator::from_manifest(&manifest_with_scoped_handler(&["admin"]), SECRET)
+            .unwrap();
         assert!(matches!(
-            v.check("Svc.admin", &bearer(&scoped_token_array(&["admin", "read"]))),
+            v.check(
+                "Svc.admin",
+                &bearer(&scoped_token_array(&["admin", "read"]))
+            ),
             AuthOutcome::Allowed { .. }
         ));
     }
 
     #[test]
     fn allowed_when_token_scope_string_contains_required_scope() {
-        let v = AuthValidator::from_manifest(&manifest_with_scoped_handler(&["write"]), SECRET).unwrap();
+        let v = AuthValidator::from_manifest(&manifest_with_scoped_handler(&["write"]), SECRET)
+            .unwrap();
         assert!(matches!(
-            v.check("Svc.admin", &bearer(&scoped_token_string("read write admin"))),
+            v.check(
+                "Svc.admin",
+                &bearer(&scoped_token_string("read write admin"))
+            ),
             AuthOutcome::Allowed { .. }
         ));
     }
 
     #[test]
     fn denied_when_token_scope_array_lacks_required_scope() {
-        let v = AuthValidator::from_manifest(&manifest_with_scoped_handler(&["admin"]), SECRET).unwrap();
+        let v = AuthValidator::from_manifest(&manifest_with_scoped_handler(&["admin"]), SECRET)
+            .unwrap();
         match v.check("Svc.admin", &bearer(&scoped_token_array(&["read"]))) {
             AuthOutcome::Denied { code, status, .. } => {
                 assert_eq!(code, "insufficient_scopes");
@@ -559,7 +593,8 @@ mod tests {
 
     #[test]
     fn denied_when_token_has_no_scopes_but_scopes_required() {
-        let v = AuthValidator::from_manifest(&manifest_with_scoped_handler(&["admin"]), SECRET).unwrap();
+        let v = AuthValidator::from_manifest(&manifest_with_scoped_handler(&["admin"]), SECRET)
+            .unwrap();
         match v.check("Svc.admin", &bearer(&valid_token())) {
             AuthOutcome::Denied { code, .. } => assert_eq!(code, "insufficient_scopes"),
             other => panic!("expected Denied, got {}", variant_name(&other)),
@@ -591,7 +626,10 @@ mod tests {
         )
         .unwrap();
         let v = AuthValidator::from_manifest(&manifest, SECRET).unwrap();
-        assert!(matches!(v.check("Svc.feed", &no_headers()), AuthOutcome::NotRequired));
+        assert!(matches!(
+            v.check("Svc.feed", &no_headers()),
+            AuthOutcome::NotRequired
+        ));
     }
 
     #[test]
@@ -648,7 +686,10 @@ mod tests {
         let v = AuthValidator::from_manifest(&manifest, SECRET).unwrap();
         let mut h = HeaderMap::new();
         h.insert(AUTHORIZATION, "Bearer bad.token".parse().unwrap());
-        assert!(matches!(v.check("Svc.feed", &h), AuthOutcome::Denied { .. }));
+        assert!(matches!(
+            v.check("Svc.feed", &h),
+            AuthOutcome::Denied { .. }
+        ));
     }
 
     // ── check: service-level auth ────────────────────────────────────────────
@@ -659,11 +700,17 @@ mod tests {
         // Both handlers are protected.
         assert!(matches!(
             v.check("Svc.handlerA", &no_headers()),
-            AuthOutcome::Denied { code: "jwt_missing", .. }
+            AuthOutcome::Denied {
+                code: "jwt_missing",
+                ..
+            }
         ));
         assert!(matches!(
             v.check("Svc.handlerB", &no_headers()),
-            AuthOutcome::Denied { code: "jwt_missing", .. }
+            AuthOutcome::Denied {
+                code: "jwt_missing",
+                ..
+            }
         ));
         // Both allow a valid token.
         assert!(matches!(
@@ -675,7 +722,8 @@ mod tests {
     #[test]
     fn handler_level_auth_overrides_service_level() {
         // Service requires auth; handler declares optional=true.
-        let v = AuthValidator::from_manifest(&manifest_handler_overrides_service_auth(), SECRET).unwrap();
+        let v = AuthValidator::from_manifest(&manifest_handler_overrides_service_auth(), SECRET)
+            .unwrap();
         // No token → NotRequired (optional) rather than Denied (service default).
         assert!(matches!(
             v.check("Svc.optHandler", &no_headers()),
@@ -707,7 +755,10 @@ mod tests {
     fn check_scopes_fails_with_missing_scope() {
         let claims = serde_json::json!({ "scopes": ["read"] });
         let err = check_scopes(&claims, &["admin".to_string()]).unwrap();
-        assert!(err.contains("admin"), "error should name the missing scope: {err}");
+        assert!(
+            err.contains("admin"),
+            "error should name the missing scope: {err}"
+        );
     }
 
     // ── Helper ───────────────────────────────────────────────────────────────

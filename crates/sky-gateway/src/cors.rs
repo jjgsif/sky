@@ -8,7 +8,7 @@
 //!   - Inject `Access-Control-*` headers into actual responses.
 
 use crate::manifest::Manifest;
-use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
+use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use serde_json::Value;
 use std::collections::HashMap;
@@ -29,7 +29,11 @@ pub fn parse_cors_config(config: &Value) -> CorsPolicy {
     let origins = config
         .get("origins")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_else(|| vec!["*".to_string()]);
 
     let credentials = config
@@ -45,16 +49,30 @@ pub fn parse_cors_config(config: &Value) -> CorsPolicy {
     let allow_headers = config
         .get("allowHeaders")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_else(|| vec!["content-type".to_string(), "authorization".to_string()]);
 
     let expose_headers = config
         .get("exposeHeaders")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|v| v.as_str().map(String::from)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|v| v.as_str().map(String::from))
+                .collect()
+        })
         .unwrap_or_default();
 
-    CorsPolicy { origins, credentials, max_age, allow_headers, expose_headers }
+    CorsPolicy {
+        origins,
+        credentials,
+        max_age,
+        allow_headers,
+        expose_headers,
+    }
 }
 
 // ── Registry ─────────────────────────────────────────────────────────────────
@@ -76,7 +94,11 @@ impl CorsRegistry {
         let mut registry = Self::default();
 
         for service in &manifest.services {
-            let prefix = service.group.as_ref().map(|g| g.prefix.as_str()).unwrap_or("");
+            let prefix = service
+                .group
+                .as_ref()
+                .map(|g| g.prefix.as_str())
+                .unwrap_or("");
 
             for handler in &service.handlers {
                 let Some(cors_mw) = handler
@@ -94,10 +116,13 @@ impl CorsRegistry {
 
                 registry.by_handler.insert(handler_id, policy.clone());
 
-                let path_entry = registry.by_path.entry(full_path).or_insert_with(|| PathCors {
-                    policy: policy.clone(),
-                    allow_methods: Vec::new(),
-                });
+                let path_entry = registry
+                    .by_path
+                    .entry(full_path)
+                    .or_insert_with(|| PathCors {
+                        policy: policy.clone(),
+                        allow_methods: Vec::new(),
+                    });
                 path_entry.allow_methods.push(handler.method.to_uppercase());
             }
         }

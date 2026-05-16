@@ -65,7 +65,7 @@ impl Supervisor {
     /// 2. Spawn the Bun worker with `SKY_WORKER_ID={worker_id}`.
     /// 3. Wait for the worker to connect and respond to PING.
     pub async fn start(
-        config: WorkerConfig,
+        mut config: WorkerConfig,
         worker_id: impl Into<String>,
     ) -> Result<Self, WorkerError> {
         let worker_id = worker_id.into();
@@ -75,6 +75,12 @@ impl Supervisor {
             pool: pool_name.clone(),
             reason: format!("invalid config: {e}"),
         })?;
+
+        // Generate a per-instance secret for worker authentication.
+        {
+            use rand::RngCore;
+            rand::rng().fill_bytes(&mut config.auth_secret);
+        }
 
         // Both Rust and TS derive the socket path from the worker ID.
         let sock_path = socket_path_for_id(&worker_id);
@@ -111,7 +117,7 @@ impl Supervisor {
                         cancel_token: shutdown_token,
                         worker_id,
                         pool_name,
-                    }
+                    },
                 )
                 .await;
             }
@@ -182,6 +188,7 @@ fn spawn_worker(
         .arg(&config.worker_script)
         .env("SKY_WORKER_VERSION", &config.worker_version)
         .env("SKY_WORKER_ID", worker_id)
+        .env("SKY_WORKER_SECRET", hex::encode(config.auth_secret))
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .kill_on_drop(true);
@@ -190,11 +197,58 @@ fn spawn_worker(
         cmd.env(k, v);
     }
 
-    let child = cmd.spawn().map_err(|e| WorkerError::Unreachable {
+    let mut child = cmd.spawn().map_err(|e| WorkerError::Unreachable {
         pool: pool_name.to_string(),
         reason: format!("failed to spawn worker: {e}"),
     })?;
+
+    let stdout = child.stdout.take().unwrap();
+    let stderr = child.stderr.take().unwrap();
+
+    tokio::spawn(pipe_worker_logs(stdout, worker_id.to_string(), false));
+    tokio::spawn(pipe_worker_logs(stderr, worker_id.to_string(), true));
     Ok(child)
+}
+
+async fn pipe_worker_logs(
+    stream: impl tokio::io::AsyncRead + Unpin + Send + 'static,
+    worker_id: String,
+    is_stderr: bool,
+) {
+    use tokio::io::{AsyncBufReadExt, BufReader};
+
+    let reader = BufReader::new(stream);
+    let mut lines = reader.lines();
+
+    while let Ok(Some(line)) = lines.next_line().await {
+        // Try to parse as JSON first — Bun workers emit structured logs
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&line) {
+            forward_structured(&worker_id, json);
+        } else {
+            // Plain text fallback
+            if is_stderr {
+                tracing::error!(worker_id, message = %line, source = "worker");
+            } else {
+                tracing::info!(worker_id, message = %line, source = "worker");
+            }
+        }
+    }
+}
+
+fn forward_structured(worker_id: &str, json: serde_json::Value) {
+    let level = json["level"].as_str().unwrap_or("INFO");
+    let message = json["fields"]["message"]
+        .as_str()
+        .or_else(|| json["message"].as_str())
+        .unwrap_or("<no message>");
+    let target = json["target"].as_str().unwrap_or("worker");
+
+    match level {
+        "ERROR" => tracing::error!(worker_id, %target, message, source = "worker"),
+        "WARN" => tracing::warn!(worker_id, %target, message, source = "worker"),
+        "DEBUG" => tracing::debug!(worker_id, %target, message, source = "worker"),
+        _ => tracing::info!(worker_id, %target, message, source = "worker"),
+    }
 }
 
 fn spawn_output_forwarder<R>(stream: R, label: &'static str, pool_name: &str)
@@ -251,7 +305,8 @@ async fn wait_for_ready(
         }
 
         // Try to accept a connection within one poll interval.
-        match tokio::time::timeout(config.poll_interval, listener.accept()).await {
+        match tokio::time::timeout(config.poll_interval, listener.accept(&config.auth_secret)).await
+        {
             Ok(Ok(socket)) => {
                 // Worker connected — verify it's alive with a PING.
                 let ping_timeout = config.poll_interval * 5;
@@ -381,11 +436,7 @@ pub struct MonitorInit {
 
 // ── Monitor loop ──────────────────────────────────────────────────────────────
 
-async fn monitor_loop(
-    mut child: Child,
-    mut restart_policy: RestartPolicy,
-    init: MonitorInit
-) {
+async fn monitor_loop(mut child: Child, mut restart_policy: RestartPolicy, init: MonitorInit) {
     let mut worker_started_at = Instant::now();
 
     loop {

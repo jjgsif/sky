@@ -5,15 +5,15 @@ import {
   Query,
   ZodBody,
   type ExtractContext,
-} from "sky/decorators";
-import { Response, HttpError } from "sky/runtime";
+} from "sky-framework/decorators";
+import { Response, HttpError } from "sky-framework/runtime";
 import { z } from "zod";
 
 // ── Zod schemas ─────────────────────────────────────────
 
 const CreateUserSchema = z.object({
   name: z.string().min(1, "Name is required"),
-  email: z.string().email("Invalid email format"),
+  email: z.email({error: "Invalid email format"}),
   role: z.enum(["admin", "member"]).default("member"),
 });
 

@@ -16,16 +16,23 @@ import { parseArgs } from "util";
 import { existsSync, watch as fsWatch } from "fs";
 import { resolve, join, dirname } from "path";
 import { assembleManifest } from "./emitter/assembler";
+import type { Subprocess } from "bun";
 
 // ── Types ───────────────────────────────────────────────
 
 interface SkyConfig {
   version: string;
-  worker?: {
-    manifest_path?: string;
-  };
+  manifest_path?: string;
+  worker?: Record<string, unknown>;
   build?: {
     sources?: string[];
+  };
+  frontend?: {
+    build?: string;
+    output?: string;
+    dev_server?: string;
+    dev_command?: string;
+    prefix?: string;
   };
 }
 
@@ -61,7 +68,7 @@ async function loadConfig(rootDir: string): Promise<SkyConfig> {
 
 function buildContext(rootDir: string, config: SkyConfig): BuildContext {
   const sources = config.build?.sources ?? DEFAULT_SOURCES;
-  const manifestPath = config.worker?.manifest_path ?? DEFAULT_MANIFEST_PATH;
+  const manifestPath = config.manifest_path ?? DEFAULT_MANIFEST_PATH;
   const entryPoints = resolveEntryPoints(rootDir, sources);
 
   if (entryPoints.length === 0) {
@@ -165,6 +172,135 @@ async function watchMode(ctx: BuildContext): Promise<void> {
   await new Promise(() => {});
 }
 
+// ── Dev mode ────────────────────────────────────────────
+
+const GATEWAY_CANDIDATES = [
+  "sky-gateway",
+  "./target/debug/sky-gateway",
+  "./target/release/sky-gateway",
+] as const;
+
+function resolveGateway(override?: string): string {
+  if (override) {
+    if (!existsSync(override)) {
+      fatal(`gateway binary not found at: ${override}`);
+    }
+    return override;
+  }
+  // Try each candidate: shell PATH lookup first, then local cargo outputs.
+  for (const candidate of GATEWAY_CANDIDATES) {
+    if (candidate.startsWith(".")) {
+      if (existsSync(candidate)) return candidate;
+    } else {
+      // Bare name — rely on PATH via Bun.which.
+      if (Bun.which(candidate)) return candidate;
+    }
+  }
+  fatal(
+    "sky-gateway binary not found.\n" +
+      "  • Add it to PATH, or\n" +
+      "  • Run `cargo build -p sky-gateway` to build locally."
+  );
+}
+
+async function devMode(
+  rootDir: string,
+  config: SkyConfig,
+  configPath: string,
+  gatewayOverride?: string
+): Promise<void> {
+  const gatewayBin = resolveGateway(gatewayOverride);
+
+  info(`starting gateway: ${gatewayBin} --dev`);
+
+  const gatewayProc = Bun.spawn(
+    [gatewayBin, "--config", configPath, "--dev"],
+    {
+      cwd: rootDir,
+      stdout: "pipe",
+      stderr: "pipe",
+    }
+  );
+
+  // Pipe gateway output with a label prefix so it's identifiable in the terminal.
+  pipeWithPrefix(gatewayProc.stdout as ReadableStream<Uint8Array>, "\x1b[32m[gateway]\x1b[0m");
+  pipeWithPrefix(gatewayProc.stderr as ReadableStream<Uint8Array>, "\x1b[32m[gateway]\x1b[0m");
+
+  let frontendProc: Subprocess | null = null;
+
+  if (config.frontend?.dev_command) {
+    const devCmd = config.frontend.dev_command;
+    info(`starting frontend: ${devCmd}`);
+    frontendProc = Bun.spawn(["sh", "-c", devCmd], {
+      cwd: rootDir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    pipeWithPrefix(frontendProc.stdout as ReadableStream<Uint8Array>, "\x1b[35m[frontend]\x1b[0m");
+    pipeWithPrefix(frontendProc.stderr as ReadableStream<Uint8Array>, "\x1b[35m[frontend]\x1b[0m");
+  } else if (config.frontend?.dev_server) {
+    info(`proxying frontend to ${config.frontend.dev_server} (no dev_command configured)`);
+  }
+
+  // Handle Ctrl-C / SIGTERM: shut down all children gracefully.
+  const shutdown = () => {
+    info("shutting down...");
+    try { gatewayProc.kill("SIGTERM"); } catch {}
+    if (frontendProc) try { frontendProc.kill("SIGTERM"); } catch {}
+    setTimeout(() => {
+      try { gatewayProc.kill("SIGKILL"); } catch {}
+      if (frontendProc) try { frontendProc.kill("SIGKILL"); } catch {}
+      process.exit(0);
+    }, 5000).unref();
+  };
+
+  process.on("SIGINT", shutdown);
+  process.on("SIGTERM", shutdown);
+
+  // Supervise: gateway crash is fatal; frontend crash is a warning.
+  gatewayProc.exited.then((code) => {
+    error(`[gateway] exited with code ${code}`);
+    if (frontendProc) try { frontendProc.kill("SIGTERM"); } catch {}
+    process.exit(1);
+  });
+
+  if (frontendProc) {
+    frontendProc.exited.then((code) => {
+      warn(
+        `[frontend] dev server exited with code ${code}. ` +
+          `Gateway is still running. Restart the frontend manually or check dev_command in sky.toml.`
+      );
+    });
+  }
+
+  // Keep the process alive until a signal or gateway exit terminates it.
+  await new Promise<never>(() => {});
+}
+
+async function pipeWithPrefix(
+  stream: ReadableStream<Uint8Array>,
+  prefix: string
+): Promise<void> {
+  const decoder = new TextDecoder();
+  const reader = stream.getReader();
+  let partial = "";
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      const text = partial + decoder.decode(value, { stream: true });
+      const lines = text.split("\n");
+      partial = lines.pop() ?? "";
+      for (const line of lines) {
+        if (line.trim()) console.log(`${prefix} ${line}`);
+      }
+    }
+    if (partial.trim()) console.log(`${prefix} ${partial}`);
+  } finally {
+    reader.releaseLock();
+  }
+}
+
 // ── Logging ─────────────────────────────────────────────
 
 function info(msg: string): void {
@@ -196,9 +332,10 @@ async function main() {
   const { values, positionals } = parseArgs({
     args: Bun.argv.slice(2),
     options: {
-      watch: { type: "boolean", short: "w", default: false },
-      config: { type: "string", short: "c" },
-      help: { type: "boolean", short: "h", default: false },
+      watch:   { type: "boolean", short: "w", default: false },
+      config:  { type: "string",  short: "c" },
+      gateway: { type: "string" },
+      help:    { type: "boolean", short: "h", default: false },
     },
     allowPositionals: true,
     strict: false,
@@ -210,11 +347,13 @@ Usage: sky <command> [options]
 
 Commands:
   build    Scan @Service classes, emit sky-manifest.json
+  dev      Start gateway in dev mode and optionally spawn the frontend dev server
 
 Options:
-  -w, --watch    Watch for changes and rebuild automatically
-  -c, --config   Path to sky.toml (default: ./sky.toml)
-  -h, --help     Show this help
+  -w, --watch        Watch for changes and rebuild (build only)
+  -c, --config       Path to sky.toml (default: ./sky.toml)
+      --gateway      Path to sky-gateway binary (dev only; auto-detected by default)
+  -h, --help         Show this help
 
 Environment:
   SKY_DEBUG=1    Enable verbose stack traces on error
@@ -224,22 +363,28 @@ Environment:
 
   const command = positionals[0];
 
-  if (command !== "build") {
-    fatal(`unknown command: '${command}'. Run 'sky --help' for usage.`);
-  }
-
   const rootDir = values.config
     ? dirname(resolve(values.config as string))
     : process.cwd();
 
-  const config = await loadConfig(rootDir);
-  const ctx = buildContext(rootDir, config);
+  const configPath = values.config
+    ? resolve(values.config as string)
+    : join(rootDir, "sky.toml");
 
-  if (values.watch) {
-    await watchMode(ctx);
+  const config = await loadConfig(rootDir);
+
+  if (command === "build") {
+    const ctx = buildContext(rootDir, config);
+    if (values.watch) {
+      await watchMode(ctx);
+    } else {
+      const ok = await build(ctx);
+      process.exit(ok ? 0 : 1);
+    }
+  } else if (command === "dev") {
+    await devMode(rootDir, config, configPath, values.gateway as string | undefined);
   } else {
-    const ok = await build(ctx);
-    process.exit(ok ? 0 : 1);
+    fatal(`unknown command: '${command}'. Run 'sky --help' for usage.`);
   }
 }
 

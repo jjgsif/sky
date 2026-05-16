@@ -35,10 +35,12 @@ export interface ManifestHandler {
     path: string;
     status: number;
     validate: boolean;
-    streaming: boolean;
+    streamRequestBody: boolean;
+    streamResponseBody: boolean;
     extract: ManifestExtract[];
     response?: JsonSchema;
     middleware?: ManifestMiddlewareEntry[];
+    timeout?: number;
 }
 
 export interface ManifestExtract {
@@ -293,9 +295,9 @@ function processHandlers(
             extracts.push(extract);
         }
 
-        // Extract response type
+        // Extract response type — skip for streaming handlers (body is AsyncGenerator, not JSON)
         let response: JsonSchema | undefined;
-        if (methodNode) {
+        if (methodNode && !handlerDef.streamResponseBody) {
             const returnType = checker.getReturnTypeOfSignature(
                 checker.getSignatureFromDeclaration(methodNode)!,
             );
@@ -316,12 +318,16 @@ function processHandlers(
             path: handlerDef.path,
             status: handlerDef.status,
             validate: handlerDef.validate ?? true,
-            streaming: handlerDef.streaming ?? false,
+            streamRequestBody: handlerDef.streamRequestBody ?? false,
+            streamResponseBody: handlerDef.streamResponseBody ?? false,
             extract: extracts,
             response,
         };
         if (handlerDef.middleware?.length) {
             handlerEntry.middleware = handlerDef.middleware.map(toMiddlewareEntry);
+        }
+        if (handlerDef.timeoutMs !== undefined) {
+            handlerEntry.timeout = handlerDef.timeoutMs;
         }
         handlers.push(handlerEntry);
     }

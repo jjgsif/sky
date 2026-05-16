@@ -16,6 +16,7 @@ const ZodBody = <S extends ZodType>(
 } => ({
     source: "body",
     stream: false,
+    validate: true,
     __t: phantom as (x: ZodInfer<S>) => ZodInfer<S>,
     schema,
     jsonSchema: toJSONSchema(schema),

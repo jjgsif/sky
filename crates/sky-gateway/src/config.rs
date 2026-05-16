@@ -72,6 +72,99 @@ fn default_token_ttl() -> Duration {
     Duration::from_secs(86400) // 24h
 }
 
+/// Frontend dev proxy / static file serving.
+///
+/// In dev mode (`sky dev` / `--dev` flag), requests under `prefix` are proxied
+/// to `dev_server`. In production mode the compiled `output` directory is served
+/// at `prefix` with an SPA fallback to `index.html`.
+///
+/// ```toml
+/// [frontend]
+/// build      = "bun run build"
+/// output     = "./dist"
+/// dev_server = "http://localhost:5173"  # Vite default
+/// dev_command = "bun run dev"           # spawned by `sky dev` (optional)
+/// prefix     = "/"
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FrontendConfig {
+    /// Production build command (e.g. `"bun run build"`).
+    pub build: String,
+    /// Output directory produced by `build`; served at `prefix` in prod mode.
+    pub output: PathBuf,
+    /// URL of the running frontend dev server to proxy to in dev mode.
+    /// Example: `"http://localhost:5173"`.
+    #[serde(default)]
+    pub dev_server: Option<String>,
+    /// Shell command used by `sky dev` to spawn the frontend dev server.
+    /// Example: `"bun run dev"`. When omitted, `sky dev` proxies to whatever
+    /// is already running at `dev_server` without launching it.
+    #[serde(default)]
+    pub dev_command: Option<String>,
+    /// URL prefix to mount. Proxied in dev mode, served from `output` in prod.
+    /// Default: `"/"`.
+    #[serde(default = "default_frontend_prefix")]
+    pub prefix: String,
+
+    /// Source directories compared for staleness in production.
+    /// If any file under these directories has a mtime newer than
+    /// `output/index.html`, the build command is re-run automatically.
+    /// Defaults to empty — only triggers a build when `output` is absent.
+    #[serde(default)]
+    pub sources: Vec<PathBuf>,
+}
+
+impl Default for FrontendConfig {
+    fn default() -> Self {
+        Self {
+            build: String::new(),
+            output: PathBuf::from("./dist"),
+            dev_server: None,
+            dev_command: None,
+            prefix: default_frontend_prefix(),
+            sources: Vec::new(),
+        }
+    }
+}
+
+fn default_frontend_prefix() -> String {
+    "/".to_string()
+}
+
+/// Static file serving via [`tower_http::services::ServeDir`].
+///
+/// ```toml
+/// [static]
+/// dir  = "./public"
+/// path = "/static"
+/// excluded_extensions = [".ts", ".env"]
+/// ```
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StaticFilesConfig {
+    /// Local directory to serve files from (relative to gateway CWD).
+    pub dir: PathBuf,
+    /// URL prefix to mount at. Default: "/static".
+    #[serde(default = "default_static_path")]
+    pub path: String,
+    /// File extensions to block with 404 before touching the filesystem.
+    #[serde(default)]
+    pub excluded_extensions: Vec<String>,
+}
+
+impl Default for StaticFilesConfig {
+    fn default() -> Self {
+        Self {
+            dir: PathBuf::from("./public"),
+            path: default_static_path(),
+            excluded_extensions: Vec::new(),
+        }
+    }
+}
+
+fn default_static_path() -> String {
+    "/static".to_string()
+}
+
 /// Top-level configuration loaded from a sky.toml file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GatewayConfig {
@@ -93,6 +186,15 @@ pub struct GatewayConfig {
     /// JWT authentication configuration. Defaults to disabled (empty secret).
     #[serde(default)]
     pub auth: AuthConfig,
+
+    /// Optional static file serving. Omit the [static] section entirely to disable.
+    #[serde(default, rename = "static")]
+    pub static_files: Option<StaticFilesConfig>,
+
+    /// Optional frontend dev proxy / static serving.
+    /// Omit the [frontend] section entirely to disable.
+    #[serde(default)]
+    pub frontend: Option<FrontendConfig>,
 
     /// Path to the manifest file produced by `sky build`.
     /// Defaults to ./sky-manifest.json.
@@ -156,6 +258,12 @@ pub struct ListenConfig {
     #[serde(with = "humantime_serde", default = "default_drain_timeout")]
     pub drain_timeout: Duration,
 
+    /// Maximum size for streaming / multipart uploads. Applied separately from
+    /// `body_limit` so large file uploads are not rejected by the JSON body cap.
+    /// Default: 50 MB.
+    #[serde(with = "byte_size_serde", default = "default_upload_limit")]
+    pub upload_limit: u64,
+
     /// Number of parallel accept loops bound with SO_REUSEPORT.
     /// 0 (default) auto-detects from available_parallelism().
     #[serde(default = "default_accept_threads")]
@@ -188,6 +296,7 @@ impl Default for ListenConfig {
             body_limit: default_body_limit(),
             drain_timeout: default_drain_timeout(),
             accept_threads: default_accept_threads(),
+            upload_limit: default_upload_limit(),
         }
     }
 }
@@ -227,6 +336,10 @@ fn default_listen_address() -> SocketAddr {
 
 fn default_body_limit() -> u64 {
     1024 * 1024 // 1 MB
+}
+
+fn default_upload_limit() -> u64 {
+    50 * 1024 * 1024 // 50 MB
 }
 
 fn default_drain_timeout() -> Duration {

@@ -1,4 +1,4 @@
-import { Service, Handler, Query, type ExtractContext } from "sky/decorators";
+import { Service, Handler, Query, type ExtractContext } from "sky-framework/decorators";
 
 const encoder = new TextEncoder();
 

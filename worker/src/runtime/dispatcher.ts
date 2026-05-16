@@ -15,7 +15,7 @@ interface MiddlewareEntry {
 
 interface HandlerMeta {
   status: number;
-  validate: boolean;
+  timeoutMs: number;
   // Full ordered chain — native entries are hoisted to the gateway; only "user" entries run here.
   middleware: MiddlewareEntry[];
 }
@@ -33,7 +33,7 @@ async function loadHandlerMeta(): Promise<Map<string, HandlerMeta>> {
     for (const handler of service.handlers) {
       meta.set(`${service.name}.${handler.name}`, {
         status: handler.status,
-        validate: handler.validate,
+        timeoutMs: handler.timeout ?? 30_000,
         middleware: [...serviceMiddleware, ...((handler.middleware ?? []) as MiddlewareEntry[])],
       });
     }
@@ -150,9 +150,14 @@ async function handleInvocation(
   for (const [field, descriptor] of Object.entries(extracts)) {
     switch (descriptor.source) {
       case "body":
-        input[field] = descriptor.stream
-          ? invocation.body                   // AsyncGenerator<Uint8Array>
-          : deserializeBody(invocation.body); // validated, deserialized object
+        if (descriptor.stream) {
+          // Prefer the streaming protocol (InvokeBodyChunk frames). Fall back
+          // to a single-chunk iterable when the gateway buffered the body
+          // (e.g. multipart/form-data via the Option-A buffered path).
+          input[field] = invocation.streamedBody ?? singleChunkIterable(invocation.body);
+        } else {
+          input[field] = deserializeBody(invocation.body);
+        }
         break;
       case "query":
         input[field] = invocation.query[descriptor.name];
@@ -190,12 +195,25 @@ async function handleInvocation(
     return normalize(result, meta.status);
   };
 
+  let timeoutHandle!: ReturnType<typeof setTimeout>;
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    timeoutHandle = setTimeout(
+      () => reject(new HttpError(503, "handler timeout")),
+      meta.timeoutMs,
+    );
+  });
+
   try {
-    const response = await runMiddlewareChain(chain, ctx, leaf);
+    const response = await Promise.race([
+      runMiddlewareChain(chain, ctx, leaf),
+      timeoutPromise,
+    ]);
+    clearTimeout(timeoutHandle);
     await sendResponse(socket, invocation.requestId, response);
   } catch (err) {
+    clearTimeout(timeoutHandle);
     if (err instanceof HttpError) {
-      await sendHttpErrorResponse(socket, invocation.requestId, err);
+      sendHttpErrorResponse(socket, invocation.requestId, err);
     } else {
       throw err;
     }
@@ -206,18 +224,18 @@ async function handleInvocation(
 // HttpError response (sends a real HTTP response with the specified status)
 // ---------------------------------------------------------------------------
 
-async function sendHttpErrorResponse(
+function sendHttpErrorResponse(
   socket: SkyWorkerSocket,
   requestId: number,
   err: HttpError,
-): Promise<void> {
+): void {
   const body = JSON.stringify({ code: "HTTP_ERROR", message: err.message });
   const bytes = new TextEncoder().encode(body);
   socket.sendHead(requestId, err.status, {
     "content-type": "application/json; charset=utf-8",
     "content-length": String(bytes.length),
   });
-  socket.sendChunk(requestId, bytes);
+  socket.sendChunkDirect(requestId, bytes);
   socket.sendEnd(requestId);
 }
 
@@ -247,7 +265,10 @@ async function sendResponse(
   if (isAsyncGenerator(response.body)) {
     socket.sendHead(requestId, response.status, response.headers);
     for await (const chunk of response.body) {
-      socket.sendChunk(requestId, chunk);
+      // Awaits both RESPONSE_CREDIT (gateway flow control) and socket
+      // drain (kernel backpressure). The await naturally yields to the
+      // event loop between chunks — no setImmediate hack needed.
+      await socket.sendChunk(requestId, chunk);
     }
     socket.sendEnd(requestId);
   } else {
@@ -258,7 +279,7 @@ async function sendResponse(
       "content-length": String(bytes.length),
       ...response.headers,
     });
-    socket.sendChunk(requestId, bytes);
+    socket.sendChunkDirect(requestId, bytes);
     socket.sendEnd(requestId);
   }
 }
@@ -268,7 +289,7 @@ async function sendResponse(
 // ---------------------------------------------------------------------------
 
 function normalize(result: unknown, defaultStatus: number): SkyResponse {
-  if (result !== null && typeof result === "object" && "body" in result) {
+  if (result !== null && typeof result === "object" && "body" in result && (result as Record<string, unknown>)["body"] != null) {
     const r = result as { status?: number; headers?: Record<string, string>; body: SkyBody };
     return {
       status: r.status ?? defaultStatus,
@@ -294,4 +315,12 @@ function isAsyncGenerator(val: unknown): val is AsyncGenerator<Uint8Array> {
 function deserializeBody(body: Uint8Array): unknown {
   if (body.length === 0) return undefined;
   return JSON.parse(new TextDecoder().decode(body));
+}
+
+function singleChunkIterable(bytes: Uint8Array): AsyncIterable<Uint8Array> {
+  return {
+    [Symbol.asyncIterator]: async function* () {
+      if (bytes.length > 0) yield bytes;
+    },
+  };
 }

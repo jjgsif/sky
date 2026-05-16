@@ -2,12 +2,13 @@
 # Schema version. Sky uses versioned config to allow future schema evolution
 # without breaking existing deployments.
 version = "1"
+manifest_path = "./sky-manifest.json"
 
 [listen]
 # Bind address. Use 127.0.0.1 for local-only, 0.0.0.0 to accept external traffic.
-address = "127.0.0.1:8080"
+address = "0.0.0.0:8080"
 # Maximum request body size.
-body_limit = "1mb"
+body_limit = "128mb"
 
 [logging]
 # "pretty" for human-readable dev output, "json" for production.
@@ -21,15 +22,13 @@ bun_path = "bun"
 # Path to the worker entry script.
 worker_script = "./demo/index.ts"
 # Number of worker processes. Increase to scale throughput across CPU cores.
-# pool_size = 1
+pool_size = 4
 # Version string the worker reports via Health.
 worker_version = "0.1.0"
 # How long to wait for the worker to become healthy before giving up.
 readiness_timeout = "10s"
 # Grace period for graceful shutdown.
 shutdown_grace = "5s"
-
-manifest_path = "./sky-manifest.json"
 
 [auth]
 # HMAC-SHA256 secret for JWT signing and verification.
@@ -39,6 +38,29 @@ jwt_secret = ""
 # Default token lifetime for issueToken(). The gateway enforces expiry
 # on every verified token regardless of this setting.
 token_ttl = "24h"
+
+[static]
+# Local directory to serve static files from (relative to gateway CWD).
+dir = "./demo/public"
+# URL path prefix to mount at.
+path = "/static"
+# Extensions to block with 404 before touching the filesystem.
+excluded_extensions = [".ts", ".toml", ".env"]
+
+[frontend]
+# Production build command. Run from the repo root.
+build = "cd demo/frontend && bun run build"
+# Output directory written by the build command.
+output = "./demo/frontend/dist"
+# Frontend source directories. If any file here is newer than output/index.html
+# the gateway re-runs the build command before accepting traffic.
+sources = ["./demo/frontend/src"]
+# Address of the running Vite dev server.
+dev_server = "http://localhost:5173"
+# Command sky dev uses to spawn the Vite dev server.
+dev_command = "cd demo/frontend && bun run dev"
+# Proxy / serve all non-API paths at the root.
+prefix = "/app"
 
 [build]
 # Directories to scan for @Service/@Handler decorated classes.

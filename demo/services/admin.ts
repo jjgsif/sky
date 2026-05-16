@@ -1,5 +1,5 @@
-import { Service, Handler, Header, Query, Group, type ExtractContext } from "sky/decorators";
-import { HttpError } from "sky/runtime";
+import { Service, Handler, Header, Query, Group, type ExtractContext } from "sky-framework/decorators";
+import { HttpError } from "sky-framework/runtime";
 
 const listExtract = {
   token: Header("x-admin-token"),

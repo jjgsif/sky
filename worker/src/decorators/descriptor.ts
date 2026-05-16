@@ -8,16 +8,16 @@ const phantom = <T>(x: T): T => x;
 //   const extract = { body: Body<{ name: string }>() } as const;
 // `ExtractContext<typeof extract>["body"]` then resolves to `{ name: string }`.
 function Body<T = unknown>(): BodyDescriptor<T> {
-    return { source: "body", stream: false, __t: phantom as (x: T) => T };
+    return { source: "body", stream: false, validate: true, __t: phantom as (x: T) => T };
 }
 function StreamedBody(): BodyDescriptor<AsyncIterable<Uint8Array>> {
-    return { source: "body", stream: true, __t: phantom as (x: AsyncIterable<Uint8Array>) => AsyncIterable<Uint8Array> };
+    return { source: "body", stream: true, validate: false, __t: phantom as (x: AsyncIterable<Uint8Array>) => AsyncIterable<Uint8Array> };
 }
 function Header(name: string): HeaderDescriptor { return { source: "header", name }; }
 function Query(name: string): QueryDescriptor { return { source: "query", name }; }
 function Param(name: string): ParamDescriptor { return { source: "param", name }; }
 function Context<TBody = unknown>(): ContextDescriptor<TBody> {
-    return { source: "context", __bodyType: phantom as (x: TBody) => TBody };
+    return { source: "context", __t: phantom as (x: TBody) => TBody };
 }
 
 export {

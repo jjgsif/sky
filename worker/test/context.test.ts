@@ -16,14 +16,15 @@ function makeInvocation(overrides: Partial<{
     body: Uint8Array;
 }> = {}) {
     return {
-        requestId: overrides.requestId ?? 42,
-        handlerId: overrides.handlerId ?? "UserService.getMe",
-        method:    overrides.method    ?? "GET",
-        path:      overrides.path      ?? "/me",
-        params:    overrides.params    ?? {},
-        query:     overrides.query     ?? {},
-        headers:   overrides.headers   ?? {},
-        body:      overrides.body      ?? new Uint8Array(0),
+        requestId:   overrides.requestId ?? 42,
+        handlerId:   overrides.handlerId ?? "UserService.getMe",
+        method:      overrides.method    ?? "GET",
+        path:        overrides.path      ?? "/me",
+        params:      overrides.params    ?? {},
+        query:       overrides.query     ?? {},
+        headers:     overrides.headers   ?? {},
+        body:        overrides.body      ?? new Uint8Array(0),
+        streamedBody: null,
     };
 }
 

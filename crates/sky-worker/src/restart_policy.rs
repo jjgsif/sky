@@ -75,7 +75,7 @@ mod tests {
     /// Using tiny numbers (ms rather than seconds) so tests stay fast
     /// and the math is obvious.
     fn test_config() -> WorkerConfig {
-        let mut config = WorkerConfig::new("bun", "./script.ts",  "test");
+        let mut config = WorkerConfig::new("bun", "./script.ts", "test");
         config.initial_backoff = Duration::from_millis(100);
         config.max_backoff = Duration::from_millis(1600);
         config.failure_threshold = 5;

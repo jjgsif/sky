@@ -81,6 +81,11 @@ export function typeToJsonSchema(
         return {};
     }
 
+    // `unknown` and `any` — permissive, no schema constraint
+    if (type.flags & (ts.TypeFlags.Unknown | ts.TypeFlags.Any)) {
+        return {};
+    }
+
     // Literals
     if (type.isStringLiteral()) {
         return { const: type.value };

@@ -26,3 +26,5 @@ bun.lockb
 
 *.sock
 CLAUDE.md
+.claude/
+*/CLAUDE.md

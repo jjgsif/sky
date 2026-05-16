@@ -27,6 +27,11 @@ futures = { workspace = true }
 humantime-serde = { workspace = true }
 arc-swap = { workspace = true }
 tokio-util = { workspace = true }
+axum-core = { workspace = true }
+rand = { workspace = true }
+hmac = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }

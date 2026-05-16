@@ -11,7 +11,7 @@
  * Test:   bun run test.ts
  */
 
-import { startServer, logger } from "sky/runtime";
+import { startServer, logger } from "sky-framework/runtime";
 
 // Application services — importing triggers decorators
 import { UserService } from "./services/user";
@@ -19,6 +19,8 @@ import { HealthService } from "./services/health";
 import { AdminService } from "./services/admin";
 import { HelloService } from "./services/hello";
 import { StreamService } from "./services/stream";
+import {FileUploadService} from "./services/fileUpload.ts";
+import { BenchmarkService } from "./services/bench";
 
 async function main() {
   const log = logger.child({ component: "demo" });
@@ -27,7 +29,7 @@ async function main() {
     workerVersion: "0.1.0",
     logger,
     gracePeriodDefaultMs: 3000,
-    services: [UserService, HealthService, AdminService, HelloService, StreamService],
+    services: [UserService, HealthService, AdminService, HelloService, StreamService, FileUploadService, BenchmarkService],
   });
 
   log.info(

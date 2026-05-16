@@ -1,0 +1,722 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Sky Demo</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: #0f0f13;
+      color: #e2e8f0;
+      min-height: 100vh;
+      padding: 2rem;
+    }
+
+    h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: #f8fafc;
+      margin-bottom: 0.25rem;
+    }
+
+    .subtitle {
+      font-size: 0.875rem;
+      color: #64748b;
+      margin-bottom: 2rem;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+      gap: 1.25rem;
+    }
+
+    .card {
+      background: #1a1a24;
+      border: 1px solid #2a2a3a;
+      border-radius: 10px;
+      padding: 1.25rem;
+    }
+
+    .card h2 {
+      font-size: 0.875rem;
+      font-weight: 600;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 1rem;
+    }
+
+    .drop-zone {
+      border: 2px dashed #2d3748;
+      border-radius: 8px;
+      padding: 2rem 1rem;
+      text-align: center;
+      cursor: pointer;
+      transition: border-color 0.2s, background 0.2s;
+      margin-bottom: 0.75rem;
+    }
+
+    .drop-zone:hover, .drop-zone.dragover {
+      border-color: #6366f1;
+      background: #1e1e2e;
+    }
+
+    .drop-zone .icon { font-size: 2rem; margin-bottom: 0.5rem; }
+    .drop-zone .label { font-size: 0.875rem; color: #64748b; }
+    .drop-zone .label strong { color: #a5b4fc; }
+
+    .file-name {
+      font-size: 0.8rem;
+      color: #6366f1;
+      margin-bottom: 0.75rem;
+      min-height: 1.2em;
+      word-break: break-all;
+    }
+
+    button {
+      width: 100%;
+      padding: 0.6rem 1rem;
+      background: #6366f1;
+      color: #fff;
+      border: none;
+      border-radius: 6px;
+      font-size: 0.875rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: background 0.2s;
+    }
+
+    button:hover:not(:disabled) { background: #4f46e5; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    button.secondary {
+      background: #2d2d3e;
+      color: #a5b4fc;
+    }
+    button.secondary:hover:not(:disabled) { background: #3a3a4e; }
+
+    .progress-bar-wrap {
+      height: 4px;
+      background: #2d2d3e;
+      border-radius: 2px;
+      margin: 0.75rem 0;
+      overflow: hidden;
+      display: none;
+    }
+    .progress-bar-wrap.visible { display: block; }
+
+    .progress-bar {
+      height: 100%;
+      background: #6366f1;
+      width: 0%;
+      transition: width 0.2s;
+    }
+
+    .result {
+      margin-top: 0.75rem;
+      font-size: 0.8rem;
+      font-family: "Fira Code", "Consolas", monospace;
+      background: #111118;
+      border-radius: 6px;
+      padding: 0.75rem;
+      white-space: pre-wrap;
+      word-break: break-all;
+      min-height: 2.5rem;
+      color: #94a3b8;
+    }
+
+    .result.ok { color: #34d399; }
+    .result.err { color: #f87171; }
+
+    input[type="text"] {
+      width: 100%;
+      padding: 0.5rem 0.75rem;
+      background: #111118;
+      border: 1px solid #2a2a3a;
+      border-radius: 6px;
+      color: #e2e8f0;
+      font-size: 0.875rem;
+      margin-bottom: 0.5rem;
+      outline: none;
+    }
+
+    input[type="text"]:focus { border-color: #6366f1; }
+
+    .row { display: flex; gap: 0.5rem; margin-bottom: 0.5rem; }
+    .row input { margin-bottom: 0; }
+
+    label { display: block; font-size: 0.75rem; color: #64748b; margin-bottom: 0.25rem; }
+
+    .card.full-width { grid-column: 1 / -1; }
+
+    .bench-section { margin-top: 1rem; }
+    .bench-section h3 {
+      font-size: 0.75rem; font-weight: 600; color: #6366f1;
+      text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 0.5rem;
+    }
+    .bench-meta { font-size: 0.7rem; color: #475569; margin-bottom: 0.75rem; }
+    .bench-scenarios {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 1rem; margin-top: 0.5rem;
+    }
+    .bench-scenario-label { font-size: 0.7rem; color: #6366f1; margin-bottom: 0.3rem; font-style: italic; }
+    .bench-table { width: 100%; border-collapse: collapse; font-size: 0.75rem; font-family: "Fira Code", "Consolas", monospace; }
+    .bench-table th { text-align: left; padding: 0.3rem 0.5rem; color: #64748b; border-bottom: 1px solid #2a2a3a; font-weight: 600; white-space: nowrap; }
+    .bench-table td { padding: 0.3rem 0.5rem; color: #94a3b8; border-bottom: 1px solid #1e1e2e; white-space: nowrap; }
+    .bench-table tr:last-child td { border-bottom: none; }
+    .bench-table td.ok  { color: #34d399; }
+    .bench-table td.sat { color: #f87171; }
+    .bench-table td.num { color: #a5b4fc; }
+  </style>
+</head>
+<body>
+  <h1>Sky Demo</h1>
+  <p class="subtitle">Live endpoint tester · gateway at <code>http://localhost:8080</code></p>
+
+  <div class="grid">
+
+    <!-- Benchmark Results -->
+    <div class="card full-width">
+      <h2>GET /bench/results — Benchmark Results</h2>
+      <p style="font-size:.8rem;color:#64748b;margin-bottom:.75rem">
+        Parsed from <code>bench/CLAUDE.md</code> — standard run · ramp saturation · TTFB.
+      </p>
+      <button class="secondary" onclick="loadBenchResults()" id="benchBtn">Load Results</button>
+      <div id="benchOutput"></div>
+    </div>
+
+    <!-- File Upload -->
+    <div class="card">
+      <h2>POST /api/files/upload</h2>
+
+      <div class="drop-zone" id="dropZone">
+        <div class="icon">📂</div>
+        <div class="label">Drop a file or <strong>click to browse</strong></div>
+      </div>
+      <input type="file" id="fileInput" style="display:none">
+      <div class="file-name" id="fileName">No file selected</div>
+
+      <div class="progress-bar-wrap" id="progressWrap">
+        <div class="progress-bar" id="progressBar"></div>
+      </div>
+
+      <button id="uploadBtn" disabled>Upload</button>
+      <div class="result" id="uploadResult"></div>
+    </div>
+
+    <!-- File Download -->
+    <div class="card">
+      <h2>GET /api/files/download/:filename</h2>
+      <p style="font-size:.8rem;color:#64748b;margin-bottom:.75rem">
+        Downloads a previously uploaded file. Upload something first, then verify it round-trips correctly.
+      </p>
+      <label>Filename</label>
+      <input type="text" id="downloadName" placeholder="sky.toml">
+      <button class="secondary" onclick="downloadFile()">Download</button>
+      <div class="result" id="downloadResult"></div>
+    </div>
+
+    <!-- Timeout test -->
+    <div class="card">
+      <h2>GET /hello/timeout-test</h2>
+      <p style="font-size:.8rem;color:#64748b;margin-bottom:.75rem">
+        Handler sleeps 10s but has a 5s timeout — expect HTTP 503 after ~5 seconds.
+      </p>
+      <button class="secondary" onclick="callTimeoutTest()" id="timeoutBtn">Fire request</button>
+      <div class="result" id="timeoutResult"></div>
+    </div>
+
+    <!-- Health -->
+    <div class="card">
+      <h2>GET /health</h2>
+      <p style="font-size:.8rem;color:#64748b;margin-bottom:.75rem">
+        Singleton HealthService — returns status, worker ID, and uptime.
+      </p>
+      <button class="secondary" onclick="callHealth()">Check health</button>
+      <div class="result" id="healthResult"></div>
+    </div>
+
+    <!-- Hello -->
+    <div class="card">
+      <h2>POST /hello</h2>
+      <label>Name</label>
+      <input type="text" id="helloName" placeholder="World" value="World">
+      <button class="secondary" onclick="callHello()">Say hello</button>
+      <div class="result" id="helloResult"></div>
+    </div>
+
+    <!-- User create -->
+    <div class="card">
+      <h2>POST /users</h2>
+      <label>Name</label>
+      <input type="text" id="userName" placeholder="Alice" value="Alice">
+      <label>Email</label>
+      <input type="text" id="userEmail" placeholder="alice@example.com" value="alice@example.com">
+      <label>Age (optional)</label>
+      <input type="text" id="userAge" placeholder="30">
+      <button class="secondary" onclick="callCreateUser()">Create user</button>
+      <div class="result" id="userResult"></div>
+    </div>
+
+    <!-- Stream events -->
+    <div class="card">
+      <h2>GET /stream/events</h2>
+      <label>Count</label>
+      <input type="text" id="streamCount" placeholder="5" value="5">
+      <button class="secondary" onclick="callStream()">Stream events</button>
+      <div class="result" id="streamResult"></div>
+    </div>
+
+    <!-- Fibonacci -->
+    <div class="card">
+      <h2>GET /stream/fibonacci</h2>
+      <p style="font-size:.8rem;color:#64748b;margin-bottom:.75rem">
+        Streams Fibonacci terms as NDJSON — each chunk delivered as it is computed.
+      </p>
+      <label>Limit (max 200)</label>
+      <input type="text" id="fibLimit" placeholder="20" value="20">
+      <button class="secondary" onclick="callFibonacci()">Stream Fibonacci</button>
+      <div class="result" id="fibResult"></div>
+    </div>
+
+  </div>
+
+  <script>
+    const BASE = '';  // same origin
+
+    // ── File upload ──────────────────────────────────────────────────────────
+
+    const dropZone  = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const fileName  = document.getElementById('fileName');
+    const uploadBtn = document.getElementById('uploadBtn');
+    const progressWrap = document.getElementById('progressWrap');
+    const progressBar  = document.getElementById('progressBar');
+    const uploadResult = document.getElementById('uploadResult');
+
+    let selectedFile = null;
+
+    dropZone.addEventListener('click', () => fileInput.click());
+
+    dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('dragover'); });
+    dropZone.addEventListener('dragleave', () => dropZone.classList.remove('dragover'));
+    dropZone.addEventListener('drop', e => {
+      e.preventDefault();
+      dropZone.classList.remove('dragover');
+      const f = e.dataTransfer.files[0];
+      if (f) selectFile(f);
+    });
+
+    fileInput.addEventListener('change', () => {
+      if (fileInput.files[0]) selectFile(fileInput.files[0]);
+    });
+
+    function selectFile(f) {
+      selectedFile = f;
+      fileName.textContent = `${f.name}  (${formatBytes(f.size)})`;
+      uploadBtn.disabled = false;
+      uploadResult.textContent = '';
+      uploadResult.className = 'result';
+    }
+
+    uploadBtn.addEventListener('click', async () => {
+      if (!selectedFile) return;
+      uploadBtn.disabled = true;
+      progressWrap.classList.add('visible');
+      progressBar.style.width = '0%';
+      uploadResult.textContent = '';
+      uploadResult.className = 'result';
+
+      try {
+        // Use FormData so the browser sets multipart/form-data + boundary automatically.
+        // The filename is embedded in the Content-Disposition header of the part —
+        // parseMultipart() on the server side reads it from there.
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', `${BASE}/api/files/upload`);
+        // Do NOT set Content-Type manually — the browser must set it with the boundary.
+
+        xhr.upload.addEventListener('progress', e => {
+          if (e.lengthComputable) {
+            progressBar.style.width = `${Math.round(e.loaded / e.total * 100)}%`;
+          }
+        });
+
+        const fd = new FormData();
+        fd.append('file', selectedFile);
+
+        const result = await new Promise((resolve, reject) => {
+          xhr.onload = () => {
+            progressBar.style.width = '100%';
+            resolve({ status: xhr.status, body: xhr.responseText });
+          };
+          xhr.onerror = () => reject(new Error('Network error'));
+          xhr.send(fd);
+        });
+
+        uploadResult.textContent = `HTTP ${result.status}\n${prettyJson(result.body)}`;
+        uploadResult.className = result.status < 400 ? 'result ok' : 'result err';
+        // Pre-fill download field with the first uploaded filename
+        if (result.status < 400) {
+          try {
+            const parsed = JSON.parse(result.body);
+            if (parsed.files?.[0]?.filename) {
+              document.getElementById('downloadName').value = parsed.files[0].filename;
+            }
+          } catch {}
+        }
+      } catch (err) {
+        uploadResult.textContent = `Error: ${err.message}`;
+        uploadResult.className = 'result err';
+      } finally {
+        uploadBtn.disabled = false;
+      }
+    });
+
+    // ── Download ──────────────────────────────────────────────────────────────
+
+    async function downloadFile() {
+      const el = document.getElementById('downloadResult');
+      const name = document.getElementById('downloadName').value.trim();
+      if (!name) { el.textContent = 'Enter a filename.'; el.className = 'result err'; return; }
+
+      const url = `${BASE}/api/files/download/${encodeURIComponent(name)}`;
+      el.textContent = 'Fetching…';
+      el.className = 'result';
+
+      try {
+        const r = await fetch(url);
+        if (!r.ok) {
+          el.textContent = `HTTP ${r.status}\n${prettyJson(await r.text())}`;
+          el.className = 'result err';
+          return;
+        }
+
+        const blob = await r.blob();
+        const file = new File([blob], name, { type: blob.type || 'application/octet-stream' });
+        const meta = `${formatBytes(blob.size)}  ·  ${file.type}`;
+
+        // iOS / mobile Safari: Web Share API shows the native Files / AirDrop sheet.
+        // navigator.canShare({ files }) is the correct feature-detect.
+        if (navigator.canShare?.({ files: [file] })) {
+          try {
+            await navigator.share({ files: [file], title: name });
+            el.textContent = `Shared  ·  ${meta}`;
+            el.className = 'result ok';
+          } catch (e) {
+            // AbortError = user dismissed the sheet; not a real error.
+            el.textContent = e.name === 'AbortError' ? 'Share cancelled.' : `Share failed: ${e.message}`;
+            el.className = e.name === 'AbortError' ? 'result' : 'result err';
+          }
+          return;
+        }
+
+        // Desktop (Chrome, Firefox, desktop Safari): blob URL + anchor click.
+        const objUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = objUrl;
+        a.download = name;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        setTimeout(() => URL.revokeObjectURL(objUrl), 1000);
+
+        el.textContent = `HTTP 200  ·  ${meta}`;
+        el.className = 'result ok';
+      } catch (e) {
+        el.textContent = `Error: ${e.message}`;
+        el.className = 'result err';
+      }
+    }
+
+    // ── Health ────────────────────────────────────────────────────────────────
+
+    async function callHealth() {
+      const el = document.getElementById('healthResult');
+      el.className = 'result';
+      el.textContent = 'Loading…';
+      try {
+        const r = await fetch(`${BASE}/health`);
+        const body = await r.text();
+        el.textContent = `HTTP ${r.status}\n${prettyJson(body)}`;
+        el.className = r.ok ? 'result ok' : 'result err';
+      } catch (e) {
+        el.textContent = `Error: ${e.message}`;
+        el.className = 'result err';
+      }
+    }
+
+    // ── Hello ─────────────────────────────────────────────────────────────────
+
+    async function callHello() {
+      const el = document.getElementById('helloResult');
+      const name = document.getElementById('helloName').value || 'World';
+      el.className = 'result';
+      el.textContent = 'Loading…';
+      try {
+        const r = await fetch(`${BASE}/hello`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ name }),
+        });
+        const body = await r.text();
+        el.textContent = `HTTP ${r.status}\n${prettyJson(body)}`;
+        el.className = r.ok ? 'result ok' : 'result err';
+      } catch (e) {
+        el.textContent = `Error: ${e.message}`;
+        el.className = 'result err';
+      }
+    }
+
+    // ── Create user ───────────────────────────────────────────────────────────
+
+    async function callCreateUser() {
+      const el = document.getElementById('userResult');
+      el.className = 'result';
+      el.textContent = 'Loading…';
+      const payload = {
+        name:  document.getElementById('userName').value,
+        email: document.getElementById('userEmail').value,
+      };
+      const age = document.getElementById('userAge').value;
+      if (age) payload.age = parseInt(age, 10);
+
+      try {
+        const r = await fetch(`${BASE}/users`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const body = await r.text();
+        el.textContent = `HTTP ${r.status}\n${prettyJson(body)}`;
+        el.className = r.ok ? 'result ok' : 'result err';
+      } catch (e) {
+        el.textContent = `Error: ${e.message}`;
+        el.className = 'result err';
+      }
+    }
+
+    // ── Stream events ─────────────────────────────────────────────────────────
+
+    async function callStream() {
+      const el = document.getElementById('streamResult');
+      const count = document.getElementById('streamCount').value || '5';
+      el.className = 'result';
+      el.textContent = 'Streaming…';
+      const lines = [];
+      try {
+        const r = await fetch(`${BASE}/stream/events?count=${count}`);
+        const reader = r.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const parts = buf.split('\n');
+          buf = parts.pop();
+          for (const p of parts) {
+            if (p.trim()) {
+              try { lines.push(JSON.stringify(JSON.parse(p), null, 0)); } catch { lines.push(p); }
+            }
+          }
+          el.textContent = lines.join('\n');
+        }
+        el.className = r.ok ? 'result ok' : 'result err';
+      } catch (e) {
+        el.textContent = `Error: ${e.message}`;
+        el.className = 'result err';
+      }
+    }
+
+    // ── Fibonacci stream ──────────────────────────────────────────────────────
+
+    async function callFibonacci() {
+      const el = document.getElementById('fibResult');
+      const limit = document.getElementById('fibLimit').value || '20';
+      el.className = 'result';
+      el.textContent = 'Streaming…';
+      const terms = [];
+      try {
+        const r = await fetch(`${BASE}/stream/fibonacci?limit=${limit}`);
+        const reader = r.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+          const parts = buf.split('\n');
+          buf = parts.pop();
+          for (const p of parts) {
+            if (p.trim()) {
+              try {
+                const { index, value: v } = JSON.parse(p);
+                terms.push(`[${String(index).padStart(3)}] ${v}`);
+              } catch { terms.push(p); }
+            }
+          }
+          el.textContent = terms.join('\n');
+        }
+        el.className = r.ok ? 'result ok' : 'result err';
+      } catch (e) {
+        el.textContent = `Error: ${e.message}`;
+        el.className = 'result err';
+      }
+    }
+
+    // ── Timeout test ─────────────────────────────────────────────────────────
+
+    async function callTimeoutTest() {
+      const el = document.getElementById('timeoutResult');
+      const btn = document.getElementById('timeoutBtn');
+      el.className = 'result';
+      el.textContent = 'Waiting (timeout fires in ~5s)…';
+      btn.disabled = true;
+      const start = Date.now();
+      try {
+        const r = await fetch(`${BASE}/hello/timeout-test`);
+        const body = await r.text();
+        const elapsed = ((Date.now() - start) / 1000).toFixed(2);
+        el.textContent = `HTTP ${r.status}  (${elapsed}s)\n${prettyJson(body)}`;
+        el.className = r.ok ? 'result ok' : 'result err';
+      } catch (e) {
+        el.textContent = `Error: ${e.message}`;
+        el.className = 'result err';
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    // ── Benchmark results ─────────────────────────────────────────────────────
+
+    async function loadBenchResults() {
+      const btn = document.getElementById('benchBtn');
+      const out = document.getElementById('benchOutput');
+      btn.disabled = true;
+      out.innerHTML = '<p style="color:#64748b;font-size:.8rem;margin-top:.75rem">Loading…</p>';
+      try {
+        const r = await fetch(`${BASE}/bench/results`);
+        if (!r.ok) {
+          out.innerHTML = `<div class="result err">HTTP ${r.status}</div>`;
+          return;
+        }
+        const data = await r.json();
+        out.innerHTML = renderBenchResults(data);
+      } catch (e) {
+        out.innerHTML = `<div class="result err">Error: ${e.message}</div>`;
+      } finally {
+        btn.disabled = false;
+      }
+    }
+
+    function renderBenchResults(data) {
+      if (data.error) {
+        return `<div class="result err" style="margin-top:.75rem">${escHtml(data.error)}</div>`;
+      }
+      let html = '';
+
+      if (data.latestStandard) {
+        const s = data.latestStandard;
+        html += `<div class="bench-section">
+          <h3>Standard Benchmark <span style="font-weight:400;text-transform:none;letter-spacing:0;color:#475569">— ${escHtml(s.timestamp)} — <code style="color:#64748b">${escHtml(s.commit)}</code></span></h3>
+          <div class="bench-meta">
+            Threads: ${escHtml(s.settings['Threads'] ?? '—')} &nbsp;·&nbsp;
+            Connections: ${escHtml(s.settings['Connections'] ?? '—')} &nbsp;·&nbsp;
+            Duration: ${escHtml(s.settings['Duration'] ?? '—')} &nbsp;·&nbsp;
+            Target: ${escHtml(s.settings['Target rate'] ?? '—')}
+          </div>
+          <div class="bench-scenarios">`;
+        for (const sc of s.scenarios) {
+          const l = sc.latency;
+          html += `<div>
+            <div class="bench-scenario-label">${escHtml(sc.scenario)}</div>
+            <div style="font-size:.7rem;color:#475569;margin-bottom:.4rem">${escHtml(sc.requestsPerSec)} req/s &nbsp;·&nbsp; ${escHtml(sc.totalRequests)} requests</div>
+            <table class="bench-table">
+              <tr><th>Percentile</th><th>Latency</th></tr>
+              <tr><td>p50</td><td class="num">${escHtml(l.p50)}</td></tr>
+              <tr><td>p75</td><td class="num">${escHtml(l.p75)}</td></tr>
+              <tr><td>p90</td><td class="num">${escHtml(l.p90)}</td></tr>
+              <tr><td>p95</td><td class="num">${escHtml(l.p95)}</td></tr>
+              <tr><td>p99</td><td class="num">${escHtml(l.p99)}</td></tr>
+              <tr><td>p99.9</td><td class="num">${escHtml(l.p999)}</td></tr>
+            </table>
+          </div>`;
+        }
+        html += `</div></div>`;
+      }
+
+      if (data.latestRamp) {
+        const r = data.latestRamp;
+        html += `<div class="bench-section">
+          <h3>Ramp Test <span style="font-weight:400;text-transform:none;letter-spacing:0;color:#475569">— ${escHtml(r.timestamp)}</span></h3>`;
+        if (r.saturationPoint) {
+          html += `<div class="bench-meta">
+            Saturation: <span style="color:#f87171">${escHtml(r.saturationPoint)}</span>
+            &nbsp;·&nbsp; Peak sustainable: <span style="color:#34d399">${escHtml(r.peakSustainable ?? '—')}</span>
+          </div>`;
+        }
+        html += `<table class="bench-table">
+          <tr><th>Target req/s</th><th>Actual req/s</th><th>p50</th><th>p99</th><th>Status</th></tr>`;
+        for (const row of r.rows) {
+          const isSat = row.status === 'SATURATED';
+          html += `<tr>
+            <td>${row.targetRps.toLocaleString()}</td>
+            <td class="num">${row.actualRps.toLocaleString()}</td>
+            <td class="num">${escHtml(row.p50)}</td>
+            <td class="num">${escHtml(row.p99)}</td>
+            <td class="${isSat ? 'sat' : 'ok'}">${escHtml(row.status)}</td>
+          </tr>`;
+        }
+        html += `</table></div>`;
+      }
+
+      if (data.latestTtfb) {
+        const t = data.latestTtfb;
+        html += `<div class="bench-section">
+          <h3>TTFB <span style="font-weight:400;text-transform:none;letter-spacing:0;color:#475569">— ${escHtml(t.timestamp)}</span></h3>
+          <div class="bench-meta">Runs: ${escHtml(t.runs)} &nbsp;·&nbsp; Concurrency: ${escHtml(t.concurrency)}</div>
+          <div class="bench-scenarios">`;
+        for (const ep of t.endpoints) {
+          html += `<div>
+            <div class="bench-scenario-label">${escHtml(ep.endpoint)}</div>
+            <table class="bench-table">
+              <tr><th>Percentile</th><th>TTFB (ms)</th></tr>`;
+          for (const row of ep.rows) {
+            html += `<tr><td>${escHtml(row.percentile)}</td><td class="num">${escHtml(row.ttfbMs)}</td></tr>`;
+          }
+          html += `</table></div>`;
+        }
+        html += `</div></div>`;
+      }
+
+      if (!html) {
+        return '<div class="result" style="margin-top:.75rem">No benchmark data found.</div>';
+      }
+      return html;
+    }
+
+    function escHtml(s) {
+      return String(s ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+    }
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+
+    function prettyJson(text) {
+      try { return JSON.stringify(JSON.parse(text), null, 2); } catch { return text; }
+    }
+
+    function formatBytes(n) {
+      if (n < 1024) return `${n} B`;
+      if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`;
+      return `${(n / 1024 / 1024).toFixed(1)} MB`;
+    }
+  </script>
+</body>
+</html>

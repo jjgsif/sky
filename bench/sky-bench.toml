@@ -10,7 +10,7 @@ accept_threads = 4
 format = "json"
 # warn suppresses per-request info events (synchronous stdout writes);
 # errors still surface.
-level = "info"
+level = "warn"
 
 [worker]
 bun_path = "bun"

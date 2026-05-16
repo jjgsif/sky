@@ -81,16 +81,10 @@ pub struct ValidationErrorResponse {
 #[derive(Debug, Error)]
 pub enum SchemaError {
     #[error("failed to resolve $ref '{ref_path}' for handler {handler}")]
-    UnresolvedRef {
-        ref_path: String,
-        handler: String,
-    },
+    UnresolvedRef { ref_path: String, handler: String },
 
-    #[error("failed to compile schema for handler {handler}: {reason}")]    
-    CompileFailed {
-        handler: String,
-        reason: String,
-    },
+    #[error("failed to compile schema for handler {handler}: {reason}")]
+    CompileFailed { handler: String, reason: String },
 }
 
 // ──────────────────────────────────────────────
@@ -131,10 +125,11 @@ impl SchemaRegistry {
                 };
 
                 // Resolve $ref if present.
-                let resolved = resolve_schema(raw_schema, manifest, &format!(
-                    "{}::{}",
-                    service.name, handler.name
-                ))?;
+                let resolved = resolve_schema(
+                    raw_schema,
+                    manifest,
+                    &format!("{}::{}", service.name, handler.name),
+                )?;
 
                 // Compile the schema.
                 let key = HandlerKey {
@@ -193,11 +188,7 @@ impl SchemaRegistry {
             .map(|err| {
                 let path = format!("/{}", err.instance_path());
                 // Clean up the root path case.
-                let path = if path == "/" {
-                    String::new()
-                } else {
-                    path
-                };
+                let path = if path == "/" { String::new() } else { path };
 
                 FieldError {
                     path,
@@ -261,12 +252,13 @@ fn resolve_schema(
 ) -> Result<serde_json::Value, SchemaError> {
     // If the top-level schema is a $ref, resolve it.
     if let Some(ref_path) = schema.get("$ref").and_then(|v| v.as_str()) {
-        let resolved = manifest.resolve_schema(ref_path).ok_or_else(|| {
-            SchemaError::UnresolvedRef {
-                ref_path: ref_path.to_string(),
-                handler: handler_label.to_string(),
-            }
-        })?;
+        let resolved =
+            manifest
+                .resolve_schema(ref_path)
+                .ok_or_else(|| SchemaError::UnresolvedRef {
+                    ref_path: ref_path.to_string(),
+                    handler: handler_label.to_string(),
+                })?;
 
         // Build a self-contained document with $defs for any
         // schemas that might be referenced within the resolved schema.
@@ -351,10 +343,7 @@ mod tests {
     use crate::manifest::Manifest;
 
     /// Helper: build a manifest with configurable handlers and schemas.
-    fn test_manifest(
-        handlers: serde_json::Value,
-        schemas: serde_json::Value,
-    ) -> Manifest {
+    fn test_manifest(handlers: serde_json::Value, schemas: serde_json::Value) -> Manifest {
         let json = serde_json::json!({
             "version": "1",
             "hash": "",
@@ -500,43 +489,45 @@ mod tests {
         assert!(registry.is_empty());
     }
 
-#[test]
-fn errors_on_unresolved_ref() {
-    let manifest = Manifest {
-        version: "1".into(),
-        hash: String::new(),
-        emitted_at: String::new(),
-        services: vec![crate::manifest::ServiceDescriptor {
-            name: "testService".into(),
-            class_name: "TestService".into(),
-            lifetime: "request".into(),
-            dependencies: vec![],
-            handlers: vec![crate::manifest::HandlerDescriptor {
-                name: "create".into(),
-                method: "POST".into(),
-                path: "/items".into(),
-                status: 201,
-                validate: true,
-                streaming: false,
-                extract: vec![crate::manifest::ExtractDescriptor {
-                    field: "body".into(),
-                    source: "body".into(),
-                    name: None,
-                    schema: Some(serde_json::json!({ "$ref": "#/schemas/DoesNotExist" })),
+    #[test]
+    fn errors_on_unresolved_ref() {
+        let manifest = Manifest {
+            version: "1".into(),
+            hash: String::new(),
+            emitted_at: String::new(),
+            services: vec![crate::manifest::ServiceDescriptor {
+                name: "testService".into(),
+                class_name: "TestService".into(),
+                lifetime: "request".into(),
+                dependencies: vec![],
+                handlers: vec![crate::manifest::HandlerDescriptor {
+                    name: "create".into(),
+                    method: "POST".into(),
+                    path: "/items".into(),
+                    status: 201,
+                    validate: true,
+                    stream_response_body: false,
+                    stream_request_body: false,
+                    extract: vec![crate::manifest::ExtractDescriptor {
+                        field: "body".into(),
+                        source: "body".into(),
+                        name: None,
+                        schema: Some(serde_json::json!({ "$ref": "#/schemas/DoesNotExist" })),
+                    }],
+                    response: None,
+                    middleware: vec![],
+                    timeout_ms: None,
                 }],
-                response: None,
+                group: None,
                 middleware: vec![],
             }],
-            group: None,
             middleware: vec![],
-        }],
-        middleware: vec![],
-        schemas: HashMap::new(),
-    };
+            schemas: HashMap::new(),
+        };
 
-    let err = SchemaRegistry::from_manifest(&manifest).unwrap_err();
-    assert!(matches!(err, SchemaError::UnresolvedRef { .. }));
-}
+        let err = SchemaRegistry::from_manifest(&manifest).unwrap_err();
+        assert!(matches!(err, SchemaError::UnresolvedRef { .. }));
+    }
 
     // ── Validation ──────────────────────────────
 
@@ -617,11 +608,12 @@ fn errors_on_unresolved_ref() {
         assert_eq!(err.code, "validation_failed");
         assert!(!err.errors.is_empty());
         // Should mention the missing field.
-        let has_email_error = err
-            .errors
-            .iter()
-            .any(|e| e.message.contains("email"));
-        assert!(has_email_error, "expected error about 'email', got: {:?}", err.errors);
+        let has_email_error = err.errors.iter().any(|e| e.message.contains("email"));
+        assert!(
+            has_email_error,
+            "expected error about 'email', got: {:?}",
+            err.errors
+        );
     }
 
     #[test]
@@ -660,7 +652,11 @@ fn errors_on_unresolved_ref() {
 
         assert_eq!(err.code, "validation_failed");
         let has_age_error = err.errors.iter().any(|e| e.path.contains("age"));
-        assert!(has_age_error, "expected error at /age, got: {:?}", err.errors);
+        assert!(
+            has_age_error,
+            "expected error at /age, got: {:?}",
+            err.errors
+        );
     }
 
     #[test]

@@ -80,6 +80,11 @@ pub struct WorkerConfig {
     /// The gateway uses this to propagate `SKY_AUTH_SECRET` from `[auth].jwt_secret`.
     #[serde(default)]
     pub env: HashMap<String, String>,
+
+    /// Per-instance HMAC secret for worker authentication.
+    /// Not loaded from TOML — generated at runtime in Supervisor::start().
+    #[serde(skip, default)]
+    pub auth_secret: [u8; 32],
 }
 
 impl WorkerConfig {
@@ -105,6 +110,7 @@ impl WorkerConfig {
             healthy_reset_duration: default_healthy_reset_duration(),
             pool_size: default_pool_size(),
             env: HashMap::new(),
+            auth_secret: [0u8; 32],
         }
     }
 

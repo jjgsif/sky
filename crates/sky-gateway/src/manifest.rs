@@ -38,7 +38,9 @@ pub enum ManifestError {
     #[error("unresolved schema $ref: {0}")]
     UnresolvedRef(String),
 
-    #[error("handler '{handler}' on service '{service}' has duplicate extract field names: {details}")]
+    #[error(
+        "handler '{handler}' on service '{service}' has duplicate extract field names: {details}"
+    )]
     DuplicateExtractField {
         service: String,
         handler: String,
@@ -149,8 +151,11 @@ pub struct HandlerDescriptor {
     /// Whether the response is streamed chunk-by-chunk to the client
     /// (HTTP chunked transfer encoding) rather than buffered. Defaults to
     /// false so older manifests continue to deserialize unchanged.
-    #[serde(default)]
-    pub streaming: bool,
+    #[serde(default, alias = "streamRequestBody")]
+    pub stream_request_body: bool,
+
+    #[serde(default, alias = "streamResponseBody")]
+    pub stream_response_body: bool,
 
     /// Parameter extraction descriptors.
     pub extract: Vec<ExtractDescriptor>,
@@ -158,6 +163,10 @@ pub struct HandlerDescriptor {
     /// Optional response schema for documentation / future validation.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub response: Option<serde_json::Value>,
+
+    /// Invocation timeout in milliseconds. Absent means use the default (30,000ms).
+    #[serde(default, rename = "timeout")]
+    pub timeout_ms: Option<u64>,
 
     /// Middleware applied to this handler specifically.
     #[serde(default)]
@@ -472,11 +481,7 @@ mod tests {
     }
 
     /// Helper: build a manifest with one service and one handler.
-    fn single_handler_manifest(
-        method: &str,
-        path: &str,
-        extract: serde_json::Value,
-    ) -> String {
+    fn single_handler_manifest(method: &str, path: &str, extract: serde_json::Value) -> String {
         serde_json::json!({
             "version": "1",
             "hash": "abc123",

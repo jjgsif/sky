@@ -42,12 +42,12 @@ impl WorkerPool {
                     let dropped = diag_socket.frames_dropped.swap(0, Ordering::Relaxed);
 
                     if routed > 0 || write_wait > 0 {
-                        tracing::info!(
-                            worker_id       = i.to_string(), // add this field if available
-                            write_lock_ms   = write_wait / 1_000_000,
+                        tracing::debug!(
+                            worker_id = i.to_string(), // add this field if available
+                            write_lock_ms = write_wait / 1_000_000,
                             inflight_lock_ms = inflight_wait / 1_000_000,
-                            frames_routed   = routed,
-                            frames_dropped  = dropped,
+                            frames_routed = routed,
+                            frames_dropped = dropped,
                             "transport diagnostics"
                         );
                     }

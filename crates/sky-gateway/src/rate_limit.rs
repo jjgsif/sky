@@ -69,7 +69,11 @@ pub fn parse_rate_limit_config(config: &Value) -> RateLimitConfig {
         .unwrap_or("ip")
         .to_string();
 
-    RateLimitConfig { bucket, per_minute, identifier }
+    RateLimitConfig {
+        bucket,
+        per_minute,
+        identifier,
+    }
 }
 
 // ── Outcome ───────────────────────────────────────────────────────────────────
@@ -77,7 +81,9 @@ pub fn parse_rate_limit_config(config: &Value) -> RateLimitConfig {
 pub enum RateLimitOutcome {
     Allowed,
     /// `retry_after_secs`: seconds until the oldest in-window entry ages out.
-    Denied { retry_after_secs: u64 },
+    Denied {
+        retry_after_secs: u64,
+    },
 }
 
 // ── Local sliding-window backend ──────────────────────────────────────────────
@@ -126,7 +132,11 @@ pub struct RedisBackend {
 }
 
 impl RedisBackend {
-    async fn connect(url: &str, pool_size: usize, command_timeout: Duration) -> Result<Self, FredError> {
+    async fn connect(
+        url: &str,
+        pool_size: usize,
+        command_timeout: Duration,
+    ) -> Result<Self, FredError> {
         let mut config = Config::from_url(url)?;
         config.blocking = Blocking::Error;
 
@@ -137,7 +147,10 @@ impl RedisBackend {
             .build_pool(pool_size)?;
 
         pool.init().await?;
-        Ok(Self { pool, fallback: LocalWindow::default() })
+        Ok(Self {
+            pool,
+            fallback: LocalWindow::default(),
+        })
     }
 
     async fn check_and_record_with_fallback(
@@ -159,10 +172,15 @@ impl RedisBackend {
         }
     }
 
-    async fn try_redis(&self, key: &WindowKey, per_minute: u64) -> Result<RateLimitOutcome, FredError> {
+    async fn try_redis(
+        &self,
+        key: &WindowKey,
+        per_minute: u64,
+    ) -> Result<RateLimitOutcome, FredError> {
         let redis_key = format!("sky:rl:{}:{}", key.0, key.1);
 
-        let result: Vec<i64> = self.pool
+        let result: Vec<i64> = self
+            .pool
             .eval(
                 SLIDING_WINDOW_LUA,
                 vec![redis_key],
@@ -223,7 +241,11 @@ impl RateLimiter {
         let mut by_path: HashMap<String, RateLimitConfig> = HashMap::new();
 
         for service in &manifest.services {
-            let prefix = service.group.as_ref().map(|g| g.prefix.as_str()).unwrap_or("");
+            let prefix = service
+                .group
+                .as_ref()
+                .map(|g| g.prefix.as_str())
+                .unwrap_or("");
 
             for handler in &service.handlers {
                 let Some(mw) = handler
@@ -239,12 +261,18 @@ impl RateLimiter {
                 let handler_id = format!("{}.{}", service.class_name, handler.name);
                 let full_path = format!("{}{}", prefix, handler.path);
 
-                by_path.entry(full_path).or_insert_with(|| parse_rate_limit_config(&config_val));
+                by_path
+                    .entry(full_path)
+                    .or_insert_with(|| parse_rate_limit_config(&config_val));
                 by_handler.insert(handler_id, policy);
             }
         }
 
-        Self { by_handler, by_path, backend }
+        Self {
+            by_handler,
+            by_path,
+            backend,
+        }
     }
 
     /// Check and record a request against the sliding-window rate limit.
@@ -332,14 +360,18 @@ mod tests {
         Manifest::from_json(&json).unwrap()
     }
 
-    fn empty_headers() -> HeaderMap { HeaderMap::new() }
+    fn empty_headers() -> HeaderMap {
+        HeaderMap::new()
+    }
 
     #[tokio::test]
     async fn allows_requests_within_limit() {
         let limiter = RateLimiter::from_manifest(&manifest_with_rate_limit("api", 3, "ip"));
         for _ in 0..3 {
             assert!(matches!(
-                limiter.check_and_record("TestService.handle", &empty_headers(), "1.2.3.4").await,
+                limiter
+                    .check_and_record("TestService.handle", &empty_headers(), "1.2.3.4")
+                    .await,
                 RateLimitOutcome::Allowed
             ));
         }
@@ -348,10 +380,16 @@ mod tests {
     #[tokio::test]
     async fn denies_request_over_limit() {
         let limiter = RateLimiter::from_manifest(&manifest_with_rate_limit("api", 2, "ip"));
-        limiter.check_and_record("TestService.handle", &empty_headers(), "1.2.3.4").await;
-        limiter.check_and_record("TestService.handle", &empty_headers(), "1.2.3.4").await;
+        limiter
+            .check_and_record("TestService.handle", &empty_headers(), "1.2.3.4")
+            .await;
+        limiter
+            .check_and_record("TestService.handle", &empty_headers(), "1.2.3.4")
+            .await;
         assert!(matches!(
-            limiter.check_and_record("TestService.handle", &empty_headers(), "1.2.3.4").await,
+            limiter
+                .check_and_record("TestService.handle", &empty_headers(), "1.2.3.4")
+                .await,
             RateLimitOutcome::Denied { .. }
         ));
     }
@@ -360,15 +398,21 @@ mod tests {
     async fn different_ips_have_independent_buckets() {
         let limiter = RateLimiter::from_manifest(&manifest_with_rate_limit("api", 1, "ip"));
         assert!(matches!(
-            limiter.check_and_record("TestService.handle", &empty_headers(), "1.1.1.1").await,
+            limiter
+                .check_and_record("TestService.handle", &empty_headers(), "1.1.1.1")
+                .await,
             RateLimitOutcome::Allowed
         ));
         assert!(matches!(
-            limiter.check_and_record("TestService.handle", &empty_headers(), "2.2.2.2").await,
+            limiter
+                .check_and_record("TestService.handle", &empty_headers(), "2.2.2.2")
+                .await,
             RateLimitOutcome::Allowed
         ));
         assert!(matches!(
-            limiter.check_and_record("TestService.handle", &empty_headers(), "1.1.1.1").await,
+            limiter
+                .check_and_record("TestService.handle", &empty_headers(), "1.1.1.1")
+                .await,
             RateLimitOutcome::Denied { .. }
         ));
     }
@@ -379,45 +423,64 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert("x-forwarded-for", "10.0.0.1, 192.168.1.1".parse().unwrap());
 
-        limiter.check_and_record("TestService.handle", &headers, "9.9.9.9").await;
+        limiter
+            .check_and_record("TestService.handle", &headers, "9.9.9.9")
+            .await;
         assert!(matches!(
-            limiter.check_and_record("TestService.handle", &headers, "9.9.9.9").await,
+            limiter
+                .check_and_record("TestService.handle", &headers, "9.9.9.9")
+                .await,
             RateLimitOutcome::Denied { .. }
         ));
         // Direct peer with no x-forwarded-for has its own budget.
         assert!(matches!(
-            limiter.check_and_record("TestService.handle", &empty_headers(), "9.9.9.9").await,
+            limiter
+                .check_and_record("TestService.handle", &empty_headers(), "9.9.9.9")
+                .await,
             RateLimitOutcome::Allowed
         ));
     }
 
     #[tokio::test]
     async fn static_identifier_shares_one_bucket() {
-        let limiter = RateLimiter::from_manifest(&manifest_with_rate_limit("global", 2, "static-key"));
-        limiter.check_and_record("TestService.handle", &empty_headers(), "1.1.1.1").await;
-        limiter.check_and_record("TestService.handle", &empty_headers(), "2.2.2.2").await;
+        let limiter =
+            RateLimiter::from_manifest(&manifest_with_rate_limit("global", 2, "static-key"));
+        limiter
+            .check_and_record("TestService.handle", &empty_headers(), "1.1.1.1")
+            .await;
+        limiter
+            .check_and_record("TestService.handle", &empty_headers(), "2.2.2.2")
+            .await;
         assert!(matches!(
-            limiter.check_and_record("TestService.handle", &empty_headers(), "3.3.3.3").await,
+            limiter
+                .check_and_record("TestService.handle", &empty_headers(), "3.3.3.3")
+                .await,
             RateLimitOutcome::Denied { .. }
         ));
     }
 
     #[tokio::test]
     async fn handlers_without_rate_limit_always_allowed() {
-        let manifest = Manifest::from_json(&serde_json::json!({
-            "version": "1", "hash": "", "emitted_at": "",
-            "services": [{ "name": "s", "className": "S", "lifetime": "singleton",
-                "dependencies": [], "handlers": [{
-                    "name": "h", "method": "GET", "path": "/", "status": 200,
-                    "validate": false, "extract": []
-                }]
-            }],
-            "middleware": [], "schemas": {}
-        }).to_string()).unwrap();
+        let manifest = Manifest::from_json(
+            &serde_json::json!({
+                "version": "1", "hash": "", "emitted_at": "",
+                "services": [{ "name": "s", "className": "S", "lifetime": "singleton",
+                    "dependencies": [], "handlers": [{
+                        "name": "h", "method": "GET", "path": "/", "status": 200,
+                        "validate": false, "extract": []
+                    }]
+                }],
+                "middleware": [], "schemas": {}
+            })
+            .to_string(),
+        )
+        .unwrap();
         let limiter = RateLimiter::from_manifest(&manifest);
         for _ in 0..100 {
             assert!(matches!(
-                limiter.check_and_record("S.h", &empty_headers(), "1.2.3.4").await,
+                limiter
+                    .check_and_record("S.h", &empty_headers(), "1.2.3.4")
+                    .await,
                 RateLimitOutcome::Allowed
             ));
         }
@@ -426,7 +489,9 @@ mod tests {
     #[tokio::test]
     async fn denied_response_includes_retry_after() {
         let limiter = RateLimiter::from_manifest(&manifest_with_rate_limit("api", 1, "ip"));
-        limiter.check_and_record("TestService.handle", &empty_headers(), "1.2.3.4").await;
+        limiter
+            .check_and_record("TestService.handle", &empty_headers(), "1.2.3.4")
+            .await;
         assert!(matches!(
             limiter.check_and_record("TestService.handle", &empty_headers(), "1.2.3.4").await,
             RateLimitOutcome::Denied { retry_after_secs } if retry_after_secs > 0

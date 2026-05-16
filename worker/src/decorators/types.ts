@@ -1,3 +1,5 @@
+import type {RequestContext} from "../runtime";
+
 interface ServiceOptions {
     lifetime?: "singleton" | "scoped" | "transient";
     name?: string;
@@ -22,6 +24,7 @@ interface ServiceRegistration {
 interface BodyDescriptor<T = unknown> {
     source: "body";
     stream: boolean;
+    validate: boolean;
     /** Phantom — never invoked. */
     __t: (x: T) => T;
 }
@@ -29,24 +32,23 @@ interface HeaderDescriptor { source: "header"; name: string }
 interface QueryDescriptor { source: "query"; name: string }
 interface ParamDescriptor { source: "param"; name: string }
 // Same phantom pattern as BodyDescriptor<T> — TBody makes the type invariant so
-// ExtractValue<ContextDescriptor<infer T>> recovers the precise body type.
+// ExtractValue<ContextDescriptor<infer TBody>> recovers the precise body type.
 interface ContextDescriptor<TBody = unknown> {
     source: "context";
-    /** Phantom — never invoked. */
-    __bodyType: (x: TBody) => TBody;
+    __t: (x: TBody) => TBody;
 }
 
-// `BodyDescriptor<any>` widens the union so any specific `BodyDescriptor<T>`
-// (from Body<T>() or ZodBody) is assignable. Inference still recovers the
+// `BodyDescriptor<any>` / `ContextDescriptor<any>` widen the unions so any
+// specific generic variant is assignable. Inference still recovers the
 // precise T via `ExtractValue` below.
 type ExtractDescriptor = BodyDescriptor<any> | HeaderDescriptor | QueryDescriptor | ParamDescriptor | ContextDescriptor<any>;
 
 type ExtractValue<E> =
-    E extends BodyDescriptor<infer T>    ? T :
-    E extends ContextDescriptor<infer T> ? import("../runtime/context").RequestContext<T> :
-    E extends ParamDescriptor            ? string :
-    E extends QueryDescriptor            ? string | undefined :
-    E extends HeaderDescriptor           ? string | undefined :
+    E extends BodyDescriptor<infer T>        ? T :
+    E extends ContextDescriptor<infer TBody> ? RequestContext<TBody> :
+    E extends ParamDescriptor                ? string :
+    E extends QueryDescriptor                ? string | undefined :
+    E extends HeaderDescriptor               ? string | undefined :
     never;
 
 type ExtractContext<E> = {
@@ -67,8 +69,10 @@ interface HandlerDefinition {
     status: number;
     extract: Record<string, ExtractDescriptor>;
     validate: boolean;
-    streaming: boolean;
+    streamRequestBody: boolean;
+    streamResponseBody: boolean;
     middleware?: (Function | InlineNativeMiddleware)[];
+    timeoutMs?: number;
 }
 
 interface HandlerOptions {
@@ -77,8 +81,12 @@ interface HandlerOptions {
     status?: number;
     extract?: Record<string, ExtractDescriptor>;
     validate?: boolean;
+    streamResponseBody?: boolean;
+    /** Alias for streamResponseBody — prefer this for readability. */
     streaming?: boolean;
     middleware?: (Function | InlineNativeMiddleware)[];
+    /** Invocation timeout in milliseconds. Defaults to 30,000ms. */
+    timeout?: number;
 }
 
 interface SkyClassMetadata {

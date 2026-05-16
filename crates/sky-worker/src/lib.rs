@@ -23,5 +23,5 @@ pub mod transport;
 
 pub use config::WorkerConfig;
 pub use pool::WorkerPool;
-pub use supervisor::{socket_path_for_id, Supervisor};
+pub use supervisor::{Supervisor, socket_path_for_id};
 pub use transport::{InboundFrame, InvokePayload, PendingRequest, SkyListener, WorkerSocket};
