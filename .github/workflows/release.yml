@@ -129,6 +129,7 @@ jobs:
         with:
           path: artifacts
           merge-multiple: true
+          pattern: sky-gateway-*
 
       - name: Generate SHA256SUMS
         run: |
