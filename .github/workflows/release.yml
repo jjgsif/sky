@@ -118,42 +118,9 @@ jobs:
           name: sky-gateway-macos-arm64
           path: dist/sky-gateway-macos-arm64*
 
-  build-macos-amd64:
-    name: Build (macos/amd64)
-    runs-on: macos-13
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-            target
-          key: rust-release-macos-amd64-${{ hashFiles('Cargo.lock') }}
-          restore-keys: rust-release-macos-amd64-
-
-      - name: Add target
-        run: rustup target add x86_64-apple-darwin
-
-      - name: Build
-        run: cargo build -p sky-gateway --release --target x86_64-apple-darwin
-
-      - name: Stage artifact
-        run: |
-          mkdir -p dist
-          cp target/x86_64-apple-darwin/release/sky-gateway dist/sky-gateway-macos-amd64
-          shasum -a 256 dist/sky-gateway-macos-amd64 > dist/sky-gateway-macos-amd64.sha256
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: sky-gateway-macos-amd64
-          path: dist/sky-gateway-macos-amd64*
-
   github-release:
     name: GitHub Release
-    needs: [prepare, build-linux-amd64, build-linux-arm64, build-macos-arm64, build-macos-amd64]
+    needs: [prepare, build-linux-amd64, build-linux-arm64, build-macos-arm64]
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
