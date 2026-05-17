@@ -143,7 +143,6 @@ jobs:
             artifacts/sky-gateway-linux-amd64
             artifacts/sky-gateway-linux-arm64
             artifacts/sky-gateway-macos-arm64
-            artifacts/sky-gateway-macos-amd64
             artifacts/SHA256SUMS
 
   docker-amd64:
