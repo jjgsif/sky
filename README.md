@@ -84,7 +84,6 @@ Download the pre-built binary for your platform from [GitHub Releases](https://g
 | Linux x86_64 | `sky-gateway-linux-amd64` |
 | Linux ARM64 | `sky-gateway-linux-arm64` |
 | macOS Apple Silicon | `sky-gateway-macos-arm64` |
-| macOS Intel | `sky-gateway-macos-amd64` |
 
 ### npm package
 
@@ -142,6 +141,114 @@ const server = await startServer({
 process.on("SIGINT", () => server.close());
 process.on("SIGTERM", () => server.close());
 ```
+
+---
+
+## `sky.toml` reference
+
+`sky.toml` is the gateway configuration file. All paths are relative to the directory from which the gateway binary is launched.
+
+```toml
+# Schema version — always "1". Sky uses this for forward-compatible config evolution.
+version = "1"
+
+# Path to the generated manifest. Must match [build] output and the worker's cwd.
+manifest_path = "./sky-manifest.json"
+
+[listen]
+# Bind address. Use 127.0.0.1 to restrict to localhost, 0.0.0.0 to accept external traffic.
+address = "0.0.0.0:8080"
+# Maximum request body size. Accepts human-readable values: "1mb", "128mb", "1gb".
+body_limit = "1mb"
+
+[logging]
+# Log format. "pretty" for colorized human-readable output (dev), "json" for structured (prod).
+format = "pretty"
+# Log level. Supports tracing filter directives: "info", "debug", "warn", "error",
+# or crate-specific filters like "sky_gateway=debug,info".
+level = "info"
+
+[worker]
+# Path to the Bun binary. Bare names are searched on PATH (same as shell resolution).
+bun_path = "bun"
+# Path to the worker entry TypeScript file.
+worker_script = "./index.ts"
+# Number of Bun worker processes in the pool. Scale with available CPU cores.
+pool_size = 4
+# Version string forwarded in INVOKE frames for routing and health checks.
+worker_version = "0.1.0"
+# How long to wait for a worker to respond to PING before declaring it unready.
+readiness_timeout = "10s"
+# Grace period for in-flight requests during graceful shutdown.
+shutdown_grace = "5s"
+
+[auth]
+# HMAC-SHA256 secret for JWT signing and verification.
+# Leave empty ("") to disable auth — any handler using requireAuth() will fail at startup.
+# In production use a strong random value: openssl rand -hex 32
+jwt_secret = ""
+# Default token lifetime for issueToken(). The gateway enforces expiry on every verified
+# token regardless of what the token itself claims.
+token_ttl = "24h"
+
+[static]
+# Directory to serve static files from.
+dir = "./public"
+# URL path prefix to mount the static directory at.
+path = "/static"
+# File extensions to block with 404 before hitting the filesystem (security hardening).
+excluded_extensions = [".ts", ".toml", ".env"]
+
+[frontend]
+# Shell command to produce the production build. Runs from the gateway's cwd.
+build = "bun run build"
+# Directory the build command writes its output to. Must contain index.html.
+output = "./dist"
+# Source directories watched to detect stale builds (newer than output/index.html → rebuild).
+sources = ["./src"]
+# Vite (or equivalent) dev server address. Used by `sky dev` to proxy requests.
+dev_server = "http://localhost:5173"
+# Command `sky dev` uses to spawn the dev server.
+dev_command = "bun run dev"
+# URL prefix to mount the frontend at. All non-API paths under this prefix are proxied/served.
+prefix = "/app"
+
+[build]
+# Directories scanned by `sky build` for @Service/@Handler decorated TypeScript files.
+# Paths are relative to the directory containing sky.toml.
+sources = ["./src/services"]
+```
+
+### Key reference
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `version` | string | — | Config schema version, always `"1"` |
+| `manifest_path` | string | `"./sky-manifest.json"` | Path to the manifest emitted by `sky build` |
+| `listen.address` | string | `"0.0.0.0:8080"` | Host and port to bind |
+| `listen.body_limit` | string | `"1mb"` | Maximum request body size |
+| `logging.format` | `"pretty"` \| `"json"` | `"pretty"` | Log output format |
+| `logging.level` | string | `"info"` | Log level filter |
+| `worker.bun_path` | string | `"bun"` | Path or bare name for the Bun binary |
+| `worker.worker_script` | string | — | Worker entry TypeScript file |
+| `worker.pool_size` | integer | `1` | Number of worker processes |
+| `worker.worker_version` | string | — | Version string forwarded to workers |
+| `worker.readiness_timeout` | duration | `"10s"` | Worker startup health-check timeout |
+| `worker.shutdown_grace` | duration | `"5s"` | Grace period for in-flight requests on shutdown |
+| `auth.jwt_secret` | string | `""` | HMAC-SHA256 secret; empty disables auth |
+| `auth.token_ttl` | duration | `"24h"` | Default token lifetime for `issueToken()` |
+| `static.dir` | string | — | Directory to serve static files from |
+| `static.path` | string | — | URL prefix to mount static files at |
+| `static.excluded_extensions` | string[] | `[]` | Extensions to block before filesystem access |
+| `frontend.build` | string | — | Shell command to build the frontend |
+| `frontend.output` | string | — | Build output directory (must contain `index.html`) |
+| `frontend.sources` | string[] | — | Source dirs watched for stale-build detection |
+| `frontend.dev_server` | string | — | Dev server address for `sky dev` proxying |
+| `frontend.dev_command` | string | — | Command to spawn the dev server |
+| `frontend.prefix` | string | `"/"` | URL prefix to mount the frontend at |
+| `build.sources` | string[] | `["./src/services"]` | Dirs scanned by `sky build` for decorated files |
+
+Duration values use human-readable syntax: `"10s"`, `"500ms"`, `"5m"`, `"24h"`.
 
 ---
 
